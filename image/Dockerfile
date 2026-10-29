@@ -33,20 +33,22 @@ RUN chmod 755 /usr/local/bin/shelley && \
     install -d -o 1000 -g 1000 /home/exedev/.config/shelley && \
     systemctl enable shelley.socket
 # A desktop with a browser, for agents that try UIs while their user watches:
-# Xvnc, openbox, Google Chrome (the browser agents' tools use by default),
-# noVNC at https://<vm>--desktop.<domain>. It starts on first use.
+# KasmVNC (an X server that is also the desktop in the browser), openbox,
+# xterm, Google Chrome (the browser agents' tools use by default), at
+# https://<vm>--desktop.<domain>. It starts on first use.
 # Chrome comes from Google's repository under Google's terms, at its latest
-# version when the image is built.
+# version when the image is built. KasmVNC is pinned like the base image.
+ADD --checksum=sha256:89a5d1fbe9e032b122202be158a2b25f15c97e0a5b8dcf92a5e6835c7b7b2acd \
+    https://github.com/kasmtech/KasmVNC/releases/download/v1.5.2/kasmvncserver_ubuntu_noble_1.5.2_amd64.deb /tmp/kasmvnc.deb
 RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg && \
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
         > /etc/apt/sources.list.d/google-chrome.list && \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        google-chrome-stable tigervnc-standalone-server openbox xterm novnc websockify fonts-noto-color-emoji && \
-    rm -rf /var/lib/apt/lists/*
+        google-chrome-stable /tmp/kasmvnc.deb openbox xterm fonts-noto-color-emoji && \
+    rm -rf /var/lib/apt/lists/* /tmp/kasmvnc.deb
 COPY boxe-desktop.sh /usr/local/lib/boxe/desktop.sh
 COPY boxe-desktop.service boxe-desktop-web.service boxe-desktop-web.socket /etc/systemd/system/
-COPY novnc-index.html /usr/share/novnc/index.html
 RUN chmod 755 /usr/local/lib/boxe/desktop.sh && systemctl enable boxe-desktop-web.socket
 # exeuntu masks udev (it is made for containers). A VM needs it: without it
 # the ACPI power button is ignored and the host cannot shut the VM down cleanly.

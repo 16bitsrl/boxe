@@ -1,10 +1,8 @@
 [Unit]
-Description=boxe desktop in the browser (noVNC)
+Description=boxe desktop in the browser (KasmVNC)
 Requires=boxe-desktop.service
 After=boxe-desktop.service
 
 [Service]
-User=exedev
-StandardInput=socket
-StandardOutput=journal
-ExecStart=/usr/bin/websockify --inetd --web /usr/share/novnc localhost:5901
+DynamicUser=yes
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd 127.0.0.1:2997

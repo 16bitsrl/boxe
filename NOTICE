@@ -16,3 +16,7 @@ The image also includes Shelley by Bold Software, under the Apache License
 2.0, unmodified: https://github.com/boldsoftware/shelley
 image/shelley-socket.conf and image/shelley-service.conf change how it is
 started (port, no exe.dev gateway).
+
+The image also installs KasmVNC by Kasm Technologies, under the GNU General
+Public License 2.0, unmodified, from its release packages:
+https://github.com/kasmtech/KasmVNC

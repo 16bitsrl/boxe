@@ -77,7 +77,7 @@ before you trust it with anything.
   the line of `new`, `cp` or `fork`, starts a conversation in the new VM and
   prints its link; typically you set up one VM with your keys and copy it.
 - **Desktop**: every VM has a desktop with Google Chrome at
-  `https://<vm>--desktop.<domain>` (noVNC), for its owner only. It starts on
+  `https://<vm>--desktop.<domain>` (KasmVNC), for its owner only. It starts on
   first use. Agents in the VM use it with `DISPLAY=:1`, for example to try a
   UI in a real browser while you watch.
 - **Share links**: `ssh boxe share <vm> [port]` prints a link that shows that
