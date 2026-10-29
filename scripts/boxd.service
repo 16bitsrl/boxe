@@ -1,0 +1,15 @@
+[Unit]
+Description=box: team microVMs (SSH to "box" on the tailnet)
+After=network-online.target exe-net.service zfs.target
+Wants=network-online.target
+Requires=exe-net.service
+
+[Service]
+# BOXD_FLAGS: this installation's settings (domain, OIDC, base image...), see boxd.env.example.
+EnvironmentFile=-/etc/exe/boxd.env
+ExecStart=/usr/local/sbin/boxd $BOXD_FLAGS
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

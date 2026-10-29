@@ -1,0 +1,9 @@
+# /etc/exe/backup.conf (mode 600): with this file box-backup.timer backs box up
+# every night. Any restic repository works; B2 for example:
+RESTIC_REPOSITORY=b2:my-bucket:exe-host
+B2_ACCOUNT_ID=<application key id, restricted to the bucket>
+B2_ACCOUNT_KEY=<application key>
+# Keep a copy of this password somewhere else: without it the backups cannot be read.
+RESTIC_PASSWORD=<long random password>
+# Optional:
+# BOX_BACKUP_KEEP="--keep-daily 7 --keep-weekly 4 --keep-monthly 3"

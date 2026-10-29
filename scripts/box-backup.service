@@ -1,0 +1,13 @@
+[Unit]
+Description=Back up box (state and VM disks) with restic
+ConditionPathExists=/etc/exe/backup.conf
+After=boxd.service zfs.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/box-backup.sh
+CacheDirectory=box-backup
+Environment=RESTIC_CACHE_DIR=/var/cache/box-backup
+Nice=10
+IOSchedulingClass=idle

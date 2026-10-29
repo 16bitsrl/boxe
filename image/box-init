@@ -1,0 +1,39 @@
+#!/bin/bash
+# PID 1 of the microVM. Applies the configuration exe-host attaches as a
+# second, read-only disk (a tar archive: hostname, machine-id, SSH keys),
+# then starts exeuntu's init. Before systemd, so hostname and machine-id are
+# right from the first moment. exe-host never mounts the VM's disk.
+#
+# An archive is applied once: etc/box/id changes every time exe-host writes
+# a new one (new VM, copy), so later reboots keep the user's own changes.
+#
+# Fails closed: without a valid configuration the VM powers off instead of
+# booting with another VM's keys (a copy carries its source's).
+cfg=/dev/vdb
+
+fail() {
+    echo "box-init: $*: powering off" >&2
+    # No systemd yet: ask the kernel directly.
+    mount -t proc proc /proc 2>/dev/null
+    echo o >/proc/sysrq-trigger
+    sleep infinity
+}
+
+[[ -b $cfg ]] || fail "no configuration disk"
+id=$(tar -xOf "$cfg" etc/box/id 2>/dev/null) || fail "cannot read the configuration"
+[[ $id =~ ^[0-9a-f]{32}$ ]] || fail "invalid configuration"
+if [[ $id != "$(cat /etc/box/id 2>/dev/null)" ]]; then
+    for f in etc/hostname etc/machine-id etc/ssh/ssh_host_ed25519_key home/exedev/.ssh/authorized_keys; do
+        tar -tf "$cfg" "$f" >/dev/null 2>&1 || fail "configuration without $f"
+    done
+    rm -f /etc/ssh/ssh_host_*
+    # tar replaces files (resolv.conf may be a symlink: it is replaced, not
+    # followed) and keeps directories that already exist, such as ~/.ssh.
+    tar -xf "$cfg" -C / --same-owner --same-permissions --exclude etc/box/id ||
+        fail "could not apply the configuration"
+    # The marker last: a configuration applied halfway is applied again.
+    tar -xf "$cfg" -C / --same-owner --same-permissions etc/box/id ||
+        fail "could not apply the configuration"
+    sync
+fi
+exec /usr/local/bin/init "$@"

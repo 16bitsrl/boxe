@@ -1,0 +1,13 @@
+boxe
+Copyright 2026 16bit S.r.l.
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The VM base image (image/) is built on exeuntu by Bold Software, the image
+of exe.dev, also under the Apache License 2.0:
+https://github.com/boldsoftware/exeuntu
+image/Dockerfile starts from a pinned exeuntu release and adds our layer:
+image/box-init, image/box-welcome.sh, image/sshd-box.conf,
+image/ssh-early.conf, image/box-sshkeys.service, and the changes made by the
+RUN steps of image/Dockerfile (SSH as a plain service, no nologin, welcome
+message, instructions for coding agents).

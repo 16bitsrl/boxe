@@ -1,0 +1,12 @@
+[Unit]
+Description=microVM network (br0, NAT, isolation)
+After=network-online.target docker.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/net-setup.sh
+
+[Install]
+WantedBy=multi-user.target
