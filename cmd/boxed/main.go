@@ -1,5 +1,5 @@
-// boxd manages the microVMs of an exe-host: an SSH server for commands
-// (`ssh box new`) and a jump host to the VMs (`ssh <vm>.box`).
+// boxed manages the microVMs of a host: an SSH server for commands
+// (`ssh boxe new`) and a jump host to the VMs (`ssh <vm>.boxe`).
 package main
 
 import (
@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -28,39 +29,52 @@ var version = "dev"
 
 func main() {
 	var (
-		stateDir    = flag.String("state", "/var/lib/exe", "state directory (database, host key, tsnet)")
-		usersFile   = flag.String("users", "/etc/exe/users", "GitHub usernames of the team, one per line")
-		hostKey     = flag.String("vm-key", "/etc/exe/id_ed25519.pub", "exe-host's public key, added to every VM")
-		base        = flag.String("base", "exe/images/boxuntu@base", "snapshot new VMs are cloned from")
-		dataset     = flag.String("dataset", "exe/vms", "ZFS dataset holding the VM disks")
-		kernel      = flag.String("kernel", "/var/lib/exe/kernels/vmlinux-7.2.8-exe", "guest kernel")
-		tsName      = flag.String("ts-hostname", "box", "Tailscale node name, what users ssh to; empty to disable Tailscale")
+		stateDir    = flag.String("state", "/var/lib/boxe", "state directory (database, host key, tsnet)")
+		usersFile   = flag.String("users", "/etc/boxe/users", "GitHub usernames of the team, one per line")
+		hostKey     = flag.String("vm-key", "/etc/boxe/id_ed25519.pub", "the host's public key, added to every VM")
+		base        = flag.String("base", "boxe/images/boxeuntu@base", "snapshot new VMs are cloned from")
+		dataset     = flag.String("dataset", "boxe/vms", "ZFS dataset holding the VM disks")
+		kernel      = flag.String("kernel", "/var/lib/boxe/kernels/vmlinux-7.2.8-boxe", "guest kernel")
+		tsName      = flag.String("ts-hostname", "boxe", "Tailscale node name, what users ssh to; empty to disable Tailscale")
 		listen      = flag.String("listen", "", "extra plain TCP address to listen on, e.g. 127.0.0.1:2222")
 		httpAddr    = flag.String("http", ":8080", "HTTP address for the web front end (TLS ends at the proxy in front); empty to disable")
 		domain      = flag.String("domain", "", "the VMs are https://<vm>.<domain>; empty: no web front end")
 		issuer      = flag.String("oidc-issuer", "", "OIDC issuer for the web login")
 		org         = flag.String("oidc-org", "", "Zitadel organization whose users may log in")
 		emailDoms   = flag.String("oidc-email-domains", "", "without -oidc-org: comma-separated domains of the verified emails that may log in")
-		sshSuffix   = flag.String("ssh-suffix", "box", "VMs are <vm>.<suffix> for SSH")
+		sshSuffix   = flag.String("ssh-suffix", "boxe", "VMs are <vm>.<suffix> for SSH")
 		dns         = flag.String("dns", "1.1.1.1,1.0.0.1", "comma-separated DNS servers for the VMs")
-		oidcFile    = flag.String("oidc", "/etc/exe/oidc", "file with OIDC_CLIENT_ID= and OIDC_CLIENT_SECRET=")
+		oidcFile    = flag.String("oidc", "/etc/boxe/oidc", "file with OIDC_CLIENT_ID= and OIDC_CLIENT_SECRET=")
 		showVersion = flag.Bool("version", false, "print the version and exit")
 		dumpDB      = flag.String("dump-db", "", "write a consistent copy of the database to this file (for backups), then exit")
 		revoke      = flag.String("revoke", "", "end every web session of this email (when someone leaves the team), then exit")
-		vmUser      = flag.String("vm-user", "exe-vm", "unprivileged user the hypervisors run as")
+		vmUser      = flag.String("vm-user", "boxe-vm", "unprivileged user the hypervisors run as")
 		vmMem       = flag.String("max-vm-mem", "8G", "most RAM a VM may have")
-		userMem     = flag.String("max-user-mem", "16G", "most RAM all of a member's VMs may have together")
+		userMem     = flag.String("max-user-mem", "16G", "most RAM a member's awake VMs may have together")
 		userVMs     = flag.Int("max-user-vms", 10, "most VMs a member may have")
 		minFree     = flag.Int64("min-free-gb", 20, "refuse new VMs when the pool has less free space (GB)")
+		sleepDir    = flag.String("sleep-dir", "", "where sleeping VMs keep their memory, e.g. /boxe/sleep (a ZFS dataset); empty: VMs never sleep")
+		sleepAfter  = flag.Duration("sleep-after", 0, "put a VM to sleep after this long unused (no SSH or web connection, little CPU and traffic), e.g. 30m; 0: never")
+		powerOffVM  = flag.String("power-off", "", "internal, run by systemd: shut down the VM behind this API socket (hypervisor pid in $MAINPID)")
 	)
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
 		return
 	}
+	if *powerOffVM != "" {
+		pid, err := strconv.Atoi(os.Getenv("MAINPID"))
+		if err != nil {
+			return // the hypervisor has ended by itself (it went to sleep)
+		}
+		if err := powerOff(*powerOffVM, pid, powerOffWait); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	log.SetFlags(0)
 
-	store, err := openStore(*stateDir + "/box.db")
+	store, err := openStore(*stateDir + "/boxe.db")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -106,24 +120,25 @@ func main() {
 	limits.UserVMs = *userVMs
 	name := *tsName
 	if name == "" {
-		name = "box"
+		name = "boxe"
 	}
 	webDomain := *domain
 	if *httpAddr == "" {
 		webDomain = ""
 	}
-	b := &Box{store: store, keys: keys, limits: limits, name: name,
-		backupConf: "/etc/exe/backup.conf", backupLast: *stateDir + "/backup-last", hv: &Hypervisor{
+	b := &Box{store: store, keys: keys, limits: limits, name: name, sleepAfter: *sleepAfter,
+		backupConf: "/etc/boxe/backup.conf", backupLast: *stateDir + "/backup-last", hv: &Hypervisor{
 			VMUser: *vmUser, VMUserID: uid, VMGroupID: gid, MinFree: *minFree << 30,
 			BaseSnapshot: *base, Dataset: *dataset, Kernel: *kernel,
 			HostPubKey: string(vmKey), HostKeyPath: strings.TrimSuffix(*hostKey, ".pub"),
-			ConfigDir: *stateDir + "/config", HostCA: hostCA,
+			StateDir: *stateDir, ConfigDir: *stateDir + "/config", SleepDir: *sleepDir, HostCA: hostCA,
 			SSHSuffix: *sshSuffix, WebDomain: webDomain, DNS: splitList(*dns),
+			Boxed: selfPath(),
 		}}
 
 	go b.RefreshLoop(10 * time.Minute)
 
-	// Bring back VMs after an exe-host reboot.
+	// Bring back VMs after a host reboot.
 	vms, err := store.List("")
 	if err != nil {
 		log.Fatal(err)
@@ -133,6 +148,8 @@ func main() {
 			log.Printf("start %s: %v", v.Name, err)
 		}
 	}
+	go b.ReapLoop(time.Minute)
+	go b.SleepLoop(time.Minute)
 
 	if webDomain != "" {
 		if *org == "" && *emailDoms == "" {
@@ -145,11 +162,16 @@ func main() {
 		}
 		web.vmLock = &b.mu
 		web.health = b.problems
+		if *sleepDir != "" {
+			web.wake = func(name string) error { return b.wake("", name) }
+		}
+		web.busy = b.busy
+		web.ownerEmail = keys.Email
 		go func() { log.Fatal(http.ListenAndServe(*httpAddr, web)) }()
 	}
 
 	srv := b.server()
-	signer, err := loadHostKey(*stateDir + "/boxd_host_ed25519")
+	signer, err := loadHostKey(*stateDir + "/boxed_host_ed25519")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -182,13 +204,13 @@ func main() {
 	for _, ln := range lns[1:] {
 		go func() { log.Fatal(srv.Serve(ln)) }()
 	}
-	log.Printf("boxd %s: %d VMs, listening on %d addresses", version, len(vms), len(lns))
+	log.Printf("boxed %s: %d VMs, listening on %d addresses", version, len(vms), len(lns))
 	log.Fatal(srv.Serve(lns[0]))
 }
 
 // readAuthKey is only needed for the first login of the tsnet node.
 func readAuthKey() string {
-	b, err := os.ReadFile("/etc/exe/ts-authkey")
+	b, err := os.ReadFile("/etc/boxe/ts-authkey")
 	if err != nil {
 		return os.Getenv("TS_AUTHKEY")
 	}
@@ -202,7 +224,7 @@ func loadHostKey(path string) (ssh.Signer, error) {
 		if err != nil {
 			return nil, err
 		}
-		block, err := gossh.MarshalPrivateKey(sk, "box")
+		block, err := gossh.MarshalPrivateKey(sk, "boxe")
 		if err != nil {
 			return nil, err
 		}
@@ -255,4 +277,13 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// selfPath is how systemd can run this program again: the path it was
+// started with (the stable link, not the versioned file it points to).
+func selfPath() string {
+	if filepath.IsAbs(os.Args[0]) {
+		return os.Args[0]
+	}
+	return ""
 }

@@ -40,7 +40,7 @@ func TestCheckName(t *testing.T) {
 			t.Errorf("%s: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "a", "box", "Test", "-x", "x-", "a.b", "1abc", "a--b"} {
+	for _, bad := range []string{"", "a", "boxe", "Test", "-x", "x-", "a.b", "1abc", "a--b"} {
 		if checkName(bad) == nil {
 			t.Errorf("%q: want error", bad)
 		}
@@ -59,7 +59,7 @@ func TestAddresses(t *testing.T) {
 }
 
 func TestInsertUsesLowestFreeIndex(t *testing.T) {
-	s, err := openStore(filepath.Join(t.TempDir(), "box.db"))
+	s, err := openStore(filepath.Join(t.TempDir(), "boxe.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,10 +97,10 @@ func TestTapNameFitsIfname(t *testing.T) {
 	}
 }
 
-// A consistent copy of the database, taken while boxd runs (for backups).
+// A consistent copy of the database, taken while boxed runs (for backups).
 func TestDumpDatabase(t *testing.T) {
 	dir := t.TempDir()
-	s, err := openStore(filepath.Join(dir, "box.db"))
+	s, err := openStore(filepath.Join(dir, "boxe.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,13 +119,13 @@ func TestDumpDatabase(t *testing.T) {
 
 // Every VM records the image it was born from (a copy: its source's).
 func TestVMRecordsItsImage(t *testing.T) {
-	s, err := openStore(filepath.Join(t.TempDir(), "box.db"))
+	s, err := openStore(filepath.Join(t.TempDir(), "boxe.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Insert(&VM{Name: "a", Owner: "u", CPUs: 1, Mem: "1G", Image: "exe/images/boxuntu-1@base"})
+	s.Insert(&VM{Name: "a", Owner: "u", CPUs: 1, Mem: "1G", Image: "boxe/images/boxeuntu-1@base"})
 	v, err := s.Get("a")
-	if err != nil || v.Image != "exe/images/boxuntu-1@base" {
+	if err != nil || v.Image != "boxe/images/boxeuntu-1@base" {
 		t.Errorf("image %q, %v", v.Image, err)
 	}
 }

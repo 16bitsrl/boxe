@@ -8,49 +8,55 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
 )
 
-// Hypervisor creates, starts and destroys microVMs on this exe-host.
+// Hypervisor creates, starts and destroys microVMs on this host.
 type Hypervisor struct {
-	BaseSnapshot string // e.g. exe/images/boxuntu-20261028@base
-	Dataset      string // parent of the VM disks, e.g. exe/vms
+	BaseSnapshot string // e.g. boxe/images/boxeuntu-20261028@base
+	Dataset      string // parent of the VM disks, e.g. boxe/vms
 	Kernel       string
-	HostPubKey   string       // exe-host's own key, added to every VM
+	HostPubKey   string       // the host's own key, added to every VM
 	HostKeyPath  string       // its private half, used to sync a VM before a copy
+	StateDir     string       // hidden from the hypervisors but for their own kernel and config disk
 	ConfigDir    string       // config disks, one per VM
-	HostCA       gossh.Signer // signs the VMs' host keys: clients trust <vm>.box with one line
+	SleepDir     string       // memory of sleeping VMs, one directory per VM; empty: VMs never sleep
+	HostCA       gossh.Signer // signs the VMs' host keys: clients trust <vm>.boxe with one line
 	VMUser       string       // the hypervisors run as this user; empty: root (tests)
 	VMUserID     int          // its uid and gid: disks and config are chowned to them
 	VMGroupID    int
 	MinFree      int64    // bytes the pool must keep free after a new VM; 0: no check
-	SSHSuffix    string   // VMs are <vm>.<SSHSuffix> for SSH, e.g. box
+	SSHSuffix    string   // VMs are <vm>.<SSHSuffix> for SSH, e.g. boxe
 	WebDomain    string   // and https://<vm>.<WebDomain>; empty: no web front end
 	DNS          []string // resolvers for the VMs
+	Boxed        string   // this program, run by systemd to shut a VM down; empty: no clean shutdown
 
-	DevDir string                                                             // zvol devices; default /dev/zvol
-	Exec   func(d time.Duration, name string, args ...string) ([]byte, error) // runs commands; default: for real
+	DevDir string                                                              // zvol devices; default /dev/zvol
+	Exec   func(d time.Duration, name string, args ...string) ([]byte, error)  // runs commands; default: for real
+	Dial   func(network, addr string, timeout time.Duration) (net.Conn, error) // connects to VMs; default: net.DialTimeout
 }
 
 // errLeftBehind: a create failed and so did the cleanup; the VM's record
 // stays so that `rm` can finish the job.
 var errLeftBehind = errors.New("left behind")
 
-const (
-	vmUID, vmGID = 1000, 1000 // exedev in exeuntu
-	runDir       = "/run/exe/vm"
-)
+const vmUID, vmGID = 1000, 1000 // exedev in exeuntu
+
+var runDir = "/run/boxe/vm" // a directory per VM, see vmRunDir
 
 func (h *Hypervisor) ds(name string) string { return h.Dataset + "/" + name }
 func (h *Hypervisor) dev(name string) string {
@@ -62,8 +68,13 @@ func (h *Hypervisor) dev(name string) string {
 func (h *Hypervisor) config(name string) string {
 	return filepath.Join(h.ConfigDir, name+".tar")
 }
-func unit(name string) string { return "exe-vm-" + name }
-func sock(name string) string { return filepath.Join(runDir, name+".sock") }
+func unit(name string) string { return "boxe-vm-" + name }
+
+// vmRunDir holds a VM's control socket and vsock: its hypervisor sees only
+// its own.
+func vmRunDir(name string) string  { return filepath.Join(runDir, name) }
+func sock(name string) string      { return filepath.Join(vmRunDir(name), "api.sock") }
+func vsockPath(name string) string { return filepath.Join(vmRunDir(name), "vsock") }
 
 // tap names come from the index: Linux limits interface names to 15 characters.
 func tap(v VM) string { return fmt.Sprintf("tap%d", v.Index) }
@@ -80,6 +91,13 @@ func (h *Hypervisor) exec(d time.Duration, name string, args ...string) ([]byte,
 		return out, fmt.Errorf("%s %s: %v: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return out, nil
+}
+
+func (h *Hypervisor) dial(network, addr string, timeout time.Duration) (net.Conn, error) {
+	if h.Dial != nil {
+		return h.Dial(network, addr, timeout)
+	}
+	return net.DialTimeout(network, addr, timeout)
 }
 
 func (h *Hypervisor) run(name string, args ...string) error {
@@ -107,18 +125,24 @@ func (h *Hypervisor) create(v VM, src, authorizedKeys string) error {
 	if err := h.writeConfig(v, authorizedKeys); err != nil {
 		return err
 	}
-	// The zvol device appears a moment after the clone.
+	if err := h.waitDev(v); err != nil {
+		return err
+	}
+	return h.Start(v)
+}
+
+// waitDev waits for v's zvol device, which appears a moment after the clone.
+func (h *Hypervisor) waitDev(v VM) error {
 	dev := h.dev(v.Name)
 	for i := 0; ; i++ {
 		if _, err := os.Stat(dev); err == nil {
-			break
+			return nil
 		}
 		if i > 1000 {
 			return fmt.Errorf("%s did not appear", dev)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	return h.Start(v)
 }
 
 // Copy snapshots the disk of src (running or not) and creates v from it.
@@ -127,9 +151,7 @@ func (h *Hypervisor) create(v VM, src, authorizedKeys string) error {
 func (h *Hypervisor) Copy(src, v VM, authorizedKeys string) error {
 	// The snapshot only sees what the VM has written to disk: flush its cache.
 	if h.Running(src.Name) {
-		if _, err := h.exec(10*time.Second, "ssh", "-i", h.HostKeyPath, "-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
-			"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
-			"exedev@"+src.IP(), "sudo sync"); err != nil {
+		if err := h.flush(src); err != nil {
 			return fmt.Errorf("could not flush the disk of %s: %v", src.Name, err)
 		}
 	}
@@ -144,6 +166,47 @@ func (h *Hypervisor) Copy(src, v VM, authorizedKeys string) error {
 	return err
 }
 
+// flush has v write its cached data to its disk.
+func (h *Hypervisor) flush(v VM) error {
+	_, err := h.inVM(v, 10*time.Second, "sudo sync")
+	return err
+}
+
+// inVM runs cmd in v as exedev, over SSH with the host's own key.
+func (h *Hypervisor) inVM(v VM, timeout time.Duration, cmd string) ([]byte, error) {
+	return h.exec(timeout, "ssh", "-i", h.HostKeyPath, "-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
+		"exedev@"+v.IP(), cmd)
+}
+
+// StartAgent starts a Shelley conversation in v on prompt and returns its
+// slug, for https://<vm>--agent.<domain>/c/<slug>. Shelley uses the models
+// and keys its owner set up in it: boxe has no credentials of its own.
+func (h *Hypervisor) StartAgent(v VM, prompt string) (string, error) {
+	quoted := "'" + strings.ReplaceAll(prompt, "'", `'\''`) + "'"
+	// Without a model of its own Shelley has only a fake one, for tests,
+	// which it does not list.
+	out, err := h.inVM(v, 30*time.Second, `m=$(curl -sf --unix-socket ~/.config/shelley/shelley.sock http://shelley/api/models) || exit 1; `+
+		`[ "$m" != "[]" ] || { echo no models; exit 3; }; shelley client chat -cwd /home/exedev -p `+quoted)
+	if err != nil && strings.TrimSpace(string(out)) == "no models" {
+		return "", fmt.Errorf("its agent has no model yet: add your API key at https://%s--agent.%s, or copy (cp or fork) a VM where you did", v.Name, h.WebDomain)
+	}
+	if err != nil {
+		return "", fmt.Errorf("its agent did not start: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	var r struct {
+		ID   string `json:"conversation_id"`
+		Slug string `json:"slug"`
+	}
+	if err := json.Unmarshal(out, &r); err != nil || r.ID == "" {
+		return "", fmt.Errorf("unexpected answer from Shelley: %q", out)
+	}
+	if r.Slug == "" {
+		return r.ID, nil
+	}
+	return r.Slug, nil
+}
+
 // FreeSpace is what the VM dataset's pool has left, in bytes.
 func (h *Hypervisor) FreeSpace() (int64, error) {
 	out, err := h.exec(10*time.Second, "zfs", "list", "-Hp", "-o", "avail", h.Dataset)
@@ -155,7 +218,7 @@ func (h *Hypervisor) FreeSpace() (int64, error) {
 
 // writeConfig writes what makes the disk this VM (hostname, DNS, SSH keys)
 // to a small archive that Start attaches as a second, read-only disk;
-// box-init applies it inside the VM before systemd starts. exe-host never
+// boxe-init applies it inside the VM before systemd starts. The host never
 // mounts a VM's disk: a copied one is written by the VM, so only the VM
 // reads it.
 func (h *Hypervisor) writeConfig(v VM, authorizedKeys string) error {
@@ -178,7 +241,7 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	// The id tells box-init whether the archive is already applied. A new
+	// The id tells boxe-init whether the archive is already applied. A new
 	// one on every write: a copy carries its source's id.
 	id := make([]byte, 16)
 	machineID := make([]byte, 16)
@@ -197,9 +260,10 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 		{"etc/ssh/ssh_host_ed25519_key.pub", hostPub, 0o644, false},
 		{"etc/ssh/ssh_host_ed25519_key-cert.pub", hostCert, 0o644, false},
 		{"home/exedev/.ssh/authorized_keys", authorizedKeys + h.HostPubKey, 0o600, true},
-		{"etc/box/web-domain", h.WebDomain + "\n", 0o644, false},
-		{"home/exedev/.config/box/AGENTS.md", h.agentsMD(v), 0o644, true},
-		{"etc/box/id", hex.EncodeToString(id) + "\n", 0o644, false},
+		{"etc/boxe/web-domain", h.WebDomain + "\n", 0o644, false},
+		{"etc/boxe/net", fmt.Sprintf("ADDRESS=%s/16\nGATEWAY=10.42.0.1\nMAC=%s\n", v.IP(), v.MAC()), 0o644, false},
+		{"home/exedev/.config/boxe/AGENTS.md", h.agentsMD(v), 0o644, true},
+		{"etc/boxe/id", hex.EncodeToString(id) + "\n", 0o644, false},
 	}
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -207,7 +271,7 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 	for _, d := range []struct {
 		name string
 		mode int64
-	}{{"home/exedev/.ssh", 0o700}, {"home/exedev/.config/box", 0o755}} {
+	}{{"home/exedev/.ssh", 0o700}, {"home/exedev/.config/boxe", 0o755}} {
 		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: d.name, Mode: d.mode,
 			Uid: vmUID, Gid: vmGID, ModTime: now}); err != nil {
 			return nil, err
@@ -228,8 +292,16 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 	if err := tw.Close(); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	if buf.Len() > configSize {
+		return nil, fmt.Errorf("configuration of %s too large: %d bytes", v.Name, buf.Len())
+	}
+	// Zeros after the end of a tar archive are allowed.
+	return append(buf.Bytes(), make([]byte, configSize-buf.Len())...), nil
 }
+
+// configSize is the size of every config disk: a fork swaps it while the VM
+// runs, and the VM keeps the size it saw at boot.
+const configSize = 1 << 20
 
 func resolvConf(servers []string) string {
 	var b strings.Builder
@@ -245,17 +317,18 @@ func (h *Hypervisor) agentsMD(v VM) string {
 	web := "- There is no web front end: reach servers in the VM with `ssh -L`."
 	if h.WebDomain != "" {
 		web = fmt.Sprintf("- Web: an HTTP server on port 8000 is published at https://%[1]s.%[2]s, ports 3000-9999 at https://%[1]s--<port>.%[2]s (e.g. https://%[1]s--3000.%[2]s). HTTPS ends at the proxy: serve plain HTTP and listen on 0.0.0.0, not 127.0.0.1.\n"+
-			"- Only logged-in members of the team reach these URLs. The proxy sends the user's email in the `X-Box-Email` header (it drops any `X-Box-*` header sent by clients) and `X-Forwarded-Proto: https`.", v.Name, h.WebDomain)
+			"- Only logged-in members of the team reach these URLs. The proxy sends the user's email in the `X-Box-Email` header (it drops any `X-Box-*` header sent by clients) and `X-Forwarded-Proto: https`. Visitors with a share link (`ssh boxe share`) come without `X-Box-Email`.\n"+
+			"- A desktop with Google Chrome: `sudo systemctl start boxe-desktop`, then run graphical programs with `DISPLAY=:1` (e.g. a headed browser to try a UI). Your user watches it at https://%[1]s--desktop.%[2]s.", v.Name, h.WebDomain)
 	}
-	return fmt.Sprintf("You are running in a box VM named %s: a microVM on the team's own infrastructure. It is similar to exe.dev, but exe.dev's services (Shelley, LLM gateway, integrations, `ssh exe.dev`) are not available here.\n\n"+
+	return fmt.Sprintf("You are running in a boxe VM named %s: a microVM on the team's own infrastructure. It is similar to exe.dev, but exe.dev's services (LLM gateway, integrations, `ssh exe.dev`) are not available here: Shelley uses the models and API keys its user added in it.\n\n"+
 		"- Ubuntu, user `exedev` with passwordless sudo, persistent disk. Docker works.\n"+
 		"- Internet works. The team's LAN, the host and the other VMs are not reachable from here.\n"+
 		"%s\n"+
-		"- VMs are created, copied and deleted from the user's computer with `ssh box` (`ssh box help`), not from inside the VM.\n", v.Name, web)
+		"- VMs are created, copied and deleted from the user's computer with `ssh boxe` (`ssh boxe help`), not from inside the VM.\n", v.Name, web)
 }
 
 // newHostKey makes the VM's SSH host key and its certificate, signed by
-// HostCA for the name users type, <vm>.box.
+// HostCA for the name users type, <vm>.boxe.
 func (h *Hypervisor) newHostKey(name string) (priv, pub, cert string, err error) {
 	pk, sk, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -283,11 +356,21 @@ func (h *Hypervisor) newHostKey(name string) (priv, pub, cert string, err error)
 }
 
 // Start boots v if it is not running. Idempotent: also used at daemon start
-// to bring VMs back after an exe-host reboot.
+// to bring VMs back after a host reboot. A sleeping VM stays asleep until
+// someone needs it (Wake).
 func (h *Hypervisor) Start(v VM) error {
 	if h.Running(v.Name) {
 		return h.guard(v) // net-setup.sh may have run again since
 	}
+	if h.Sleeping(v.Name) {
+		return nil
+	}
+	return h.start(v, false)
+}
+
+// start runs v's hypervisor: a fresh boot, or with restore its memory as it
+// was when it went to sleep.
+func (h *Hypervisor) start(v VM, restore bool) error {
 	h.run("systemctl", "reset-failed", unit(v.Name)) // a failed unit keeps its name
 	mib, err := memMiB(v.Mem)
 	if err != nil {
@@ -312,7 +395,7 @@ func (h *Hypervisor) Start(v VM) error {
 		{"ip", "link", "set", t, "master", "br0", "up"},
 		// Isolated bridge ports cannot talk to each other: VMs do not see each other.
 		{"bridge", "link", "set", "dev", t, "isolated", "on"},
-		// Known MAC: exe-host does not wait for ARP, which retries only once a second.
+		// Known MAC: the host does not wait for ARP, which retries only once a second.
 		{"ip", "neigh", "replace", v.IP(), "lladdr", v.MAC(), "dev", "br0", "nud", "permanent"},
 	}
 	for _, s := range steps {
@@ -325,19 +408,52 @@ func (h *Hypervisor) Start(v VM) error {
 		return err
 	}
 	os.MkdirAll(runDir, 0o755)
-	os.Remove(sock(v.Name))
+	os.RemoveAll(vmRunDir(v.Name))
+	if err := os.Mkdir(vmRunDir(v.Name), 0o700); err != nil {
+		return err
+	}
 	// The hypervisor is the part a VM could break out to: it runs as an
-	// unprivileged user, sees only its own disks, and cannot use more memory
-	// and CPU than the VM was given (plus room for itself).
+	// unprivileged user, sees only its own disks, sockets and saved memory,
+	// and cannot use more memory and CPU than the VM was given (plus room
+	// for itself).
 	props := []string{
-		"Restart=on-failure", "RestartSec=2",
 		fmt.Sprintf("MemoryMax=%dM", mib+mib/8+256),
 		fmt.Sprintf("CPUQuota=%d%%", v.CPUs*100),
 		"TasksMax=1024",
 		"NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes",
 		"ProtectKernelModules=yes", "ProtectKernelLogs=yes", "ProtectControlGroups=yes",
-		"CapabilityBoundingSet=", "ReadWritePaths=" + runDir,
+		"CapabilityBoundingSet=", "InaccessiblePaths=-/etc/boxe",
+		"TemporaryFileSystem=" + runDir + ":ro", "BindPaths=" + vmRunDir(v.Name),
 		"DevicePolicy=closed", "DeviceAllow=/dev/kvm rw", "DeviceAllow=/dev/net/tun rw", "DeviceAllow=" + disk + " rw",
+	}
+	if restore {
+		// After a crash, not again from the same memory: the disk has moved on.
+		props = append(props, "Restart=no")
+	} else {
+		props = append(props, "Restart=on-failure", "RestartSec=2")
+	}
+	if h.StateDir != "" {
+		props = append(props, "TemporaryFileSystem="+h.StateDir+":ro",
+			"BindReadOnlyPaths="+h.Kernel, "BindReadOnlyPaths="+h.config(v.Name))
+	}
+	if h.SleepDir != "" {
+		// Its own sleep directory, writable, and none of the others'.
+		dir := h.sleepDir(v.Name)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		if h.VMUserID > 0 {
+			if err := os.Chown(dir, h.VMUserID, h.VMGroupID); err != nil {
+				return err
+			}
+		}
+		props = append(props, "TemporaryFileSystem="+h.SleepDir+":ro", "BindPaths="+dir)
+	}
+	if h.Boxed != "" {
+		// Stopping the unit (restart, rm, host shutdown) first presses the
+		// power button and waits for the guest; systemd kills what is left.
+		props = append(props, "ExecStop="+h.Boxed+" -power-off "+sock(v.Name),
+			fmt.Sprintf("TimeoutStopSec=%d", int((powerOffWait+10*time.Second).Seconds())))
 	}
 	if h.VMUserID > 0 {
 		for _, p := range []string{disk, h.config(v.Name)} {
@@ -345,7 +461,9 @@ func (h *Hypervisor) Start(v VM) error {
 				return err
 			}
 		}
-		os.Chown(runDir, h.VMUserID, h.VMGroupID)
+		if err := os.Chown(vmRunDir(v.Name), h.VMUserID, h.VMGroupID); err != nil {
+			return err
+		}
 	}
 	if h.VMUser != "" {
 		props = append(props, "User="+h.VMUser, "Group="+h.VMUser, "SupplementaryGroups=kvm")
@@ -354,7 +472,15 @@ func (h *Hypervisor) Start(v VM) error {
 	for _, p := range props {
 		args = append(args, "-p", p)
 	}
-	cmdline := fmt.Sprintf("console=ttyS0 root=/dev/vda rw init=/usr/local/bin/box-init ip=%s::10.42.0.1:255.255.0.0:%s:eth0:off quiet", v.IP(), v.Name)
+	if restore {
+		if err := h.retarget(v, disk); err != nil {
+			return err
+		}
+		args = append(args, "/usr/local/bin/cloud-hypervisor", "--api-socket", sock(v.Name),
+			"--restore", "source_url=file://"+h.sleepDir(v.Name)+",memory_restore_mode=copyonwrite,resume=true")
+		return h.run("systemd-run", args...)
+	}
+	cmdline := fmt.Sprintf("console=ttyS0 root=/dev/vda rw init=/usr/local/bin/boxe-init ip=%s::10.42.0.1:255.255.0.0:%s:eth0:off quiet", v.IP(), v.Name)
 	args = append(args, "/usr/local/bin/cloud-hypervisor",
 		"--api-socket", sock(v.Name),
 		"--kernel", h.Kernel,
@@ -364,15 +490,22 @@ func (h *Hypervisor) Start(v VM) error {
 		"--cpus", fmt.Sprintf("boot=%d", v.CPUs),
 		"--memory", "size="+v.Mem,
 		"--net", "tap="+t+",mac="+v.MAC(),
-		// The console goes to the journal (journalctl -u exe-vm-<name>),
+		// The host talks to boxe-agent in the VM through it (see sleep.go).
+		"--vsock", "cid=3,socket="+vsockPath(v.Name),
+		// The console goes to the journal (journalctl -u boxe-vm-<name>),
 		// which caps its size, instead of a file that grows forever.
 		"--serial", "tty",
 		"--console", "off")
 	return h.run("systemd-run", args...)
 }
 
-// Stop powers v off (a power cut: the VM is not asked to shut down).
+// Stop powers v off: the unit asks the guest to shut down (see Start) and
+// cuts the power if it does not within powerOffWait. A sleeping VM forgets
+// its memory: it boots afresh next time.
 func (h *Hypervisor) Stop(v VM) error {
+	if err := h.forgetSleep(v.Name); err != nil {
+		return err
+	}
 	h.run("systemctl", "stop", unit(v.Name))
 	if h.Running(v.Name) {
 		return fmt.Errorf("%s is still running", v.Name)
@@ -384,13 +517,13 @@ func (h *Hypervisor) Stop(v VM) error {
 // guard allows the VM's tap to send with the VM's own MAC and IP only (the
 // rules are in net-setup.sh). Done before the tap is up; idempotent.
 func (h *Hypervisor) guard(v VM) error {
-	if err := h.run("nft", fmt.Sprintf(`add element bridge box mac { "%s" . %s }`, tap(v), v.MAC())); err != nil {
+	if err := h.run("nft", fmt.Sprintf(`add element bridge boxe mac { "%s" . %s }`, tap(v), v.MAC())); err != nil {
 		return err
 	}
-	return h.run("nft", fmt.Sprintf(`add element bridge box ip4 { "%s" . %s }`, tap(v), v.IP()))
+	return h.run("nft", fmt.Sprintf(`add element bridge boxe ip4 { "%s" . %s }`, tap(v), v.IP()))
 }
 
-// State is running, starting, failed or stopped.
+// State is running, starting, failed, sleeping or stopped.
 func (h *Hypervisor) State(name string) string {
 	out, _ := h.exec(5*time.Second, "systemctl", "is-active", unit(name))
 	switch strings.TrimSpace(string(out)) {
@@ -398,7 +531,11 @@ func (h *Hypervisor) State(name string) string {
 		return "running"
 	case "activating":
 		return "starting"
-	case "failed":
+	}
+	if h.Sleeping(name) {
+		return "sleeping"
+	}
+	if strings.TrimSpace(string(out)) == "failed" {
 		return "failed"
 	}
 	return "stopped"
@@ -414,9 +551,9 @@ func (h *Hypervisor) WaitSSH(v VM, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for i := 0; time.Now().Before(deadline); i++ {
 		if i%50 == 49 && !h.Running(v.Name) {
-			return fmt.Errorf("%s stopped while booting (journalctl -u %s on exe-host)", v.Name, unit(v.Name))
+			return fmt.Errorf("%s stopped while booting (journalctl -u %s on the host)", v.Name, unit(v.Name))
 		}
-		c, err := net.DialTimeout("tcp", v.IP()+":22", 300*time.Millisecond)
+		c, err := h.dial("tcp", v.IP()+":22", 300*time.Millisecond)
 		if err == nil {
 			c.SetReadDeadline(time.Now().Add(time.Second))
 			line, _ := bufio.NewReader(c).ReadString('\n')
@@ -439,6 +576,16 @@ func (h *Hypervisor) Destroy(v VM) error {
 		return err
 	}
 	if h.diskExists(v.Name) {
+		// A copy's disk is a clone of a snapshot of its source, taken for it.
+		origin := ""
+		if out, err := h.exec(30*time.Second, "zfs", "get", "-H", "-o", "value", "origin", h.ds(v.Name)); err == nil {
+			origin = strings.TrimSpace(string(out))
+		}
+		defer func() {
+			if strings.HasPrefix(origin, h.Dataset+"/") && strings.Contains(origin, "@cp-"+v.Name+"-") && !h.diskExists(v.Name) {
+				h.run("zfs", "destroy", origin) // fails, harmlessly, if another copy was made from it
+			}
+		}()
 		if err := h.run("zfs", "destroy", "-r", h.ds(v.Name)); err != nil {
 			out, err := h.exec(time.Minute, "zfs", "list", "-H", "-t", "snapshot", "-o", "clones", "-r", h.ds(v.Name))
 			if err != nil {
@@ -463,11 +610,14 @@ func (h *Hypervisor) Destroy(v VM) error {
 	}
 	// What is left may already be gone: errors do not matter.
 	h.run("ip", "link", "del", tap(v))
-	h.run("nft", fmt.Sprintf(`delete element bridge box mac { "%s" . %s }`, tap(v), v.MAC()))
-	h.run("nft", fmt.Sprintf(`delete element bridge box ip4 { "%s" . %s }`, tap(v), v.IP()))
+	h.run("nft", fmt.Sprintf(`delete element bridge boxe mac { "%s" . %s }`, tap(v), v.MAC()))
+	h.run("nft", fmt.Sprintf(`delete element bridge boxe ip4 { "%s" . %s }`, tap(v), v.IP()))
 	h.run("ip", "neigh", "del", v.IP(), "dev", "br0")
-	os.Remove(sock(v.Name))
+	os.RemoveAll(vmRunDir(v.Name))
 	os.Remove(h.config(v.Name))
+	if h.SleepDir != "" {
+		os.RemoveAll(h.sleepDir(v.Name))
+	}
 	return nil
 }
 
@@ -489,4 +639,31 @@ func memMiB(s string) (int, error) {
 		n *= 1024
 	}
 	return n, nil
+}
+
+// powerOffWait is how long a guest gets to shut down cleanly.
+const powerOffWait = 30 * time.Second
+
+// powerOff presses the power button of the VM behind sock and waits until
+// its hypervisor, pid, exits. Run by systemd as the unit's ExecStop.
+func powerOff(sock string, pid int, wait time.Duration) error {
+	c := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+		}}}
+	req, _ := http.NewRequest("PUT", "http://vm/api/v1/vm.power-button", nil)
+	res, err := c.Do(req)
+	if err != nil {
+		return err
+	}
+	res.Body.Close()
+	if res.StatusCode/100 != 2 {
+		return fmt.Errorf("power button: %s", res.Status)
+	}
+	for end := time.Now().Add(wait); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
+		if syscall.Kill(pid, 0) != nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("the guest did not shut down within %v", wait)
 }

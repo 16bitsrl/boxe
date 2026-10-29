@@ -1,0 +1,9 @@
+[Unit]
+Description=boxe agent: answers the host over vsock
+
+[Service]
+ExecStart=/usr/bin/socat VSOCK-LISTEN:1024,fork EXEC:/usr/local/sbin/boxe-agent
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

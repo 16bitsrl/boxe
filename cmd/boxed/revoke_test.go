@@ -14,7 +14,7 @@ import (
 // Someone removed from the team (or whose key is gone from GitHub) is
 // disconnected at the next key refresh, jumps into VMs included.
 func TestSSHRevokedKeyIsDisconnected(t *testing.T) {
-	s, err := openStore(filepath.Join(t.TempDir(), "box.db"))
+	s, err := openStore(filepath.Join(t.TempDir(), "boxe.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestSSHRevokedKeyIsDisconnected(t *testing.T) {
 	}
 	defer c.Close()
 	b.revalidate() // nothing changed: stays connected
-	if _, _, err := c.SendRequest("keepalive@box", true, nil); err != nil {
+	if _, _, err := c.SendRequest("keepalive@boxe", true, nil); err != nil {
 		t.Fatalf("disconnected although the key is still valid: %v", err)
 	}
 
@@ -54,7 +54,7 @@ func TestSSHRevokedKeyIsDisconnected(t *testing.T) {
 
 // When GitHub does not answer, cached keys are used, but not for ever.
 func TestStaleCachedKeysExpire(t *testing.T) {
-	s, err := openStore(filepath.Join(t.TempDir(), "box.db"))
+	s, err := openStore(filepath.Join(t.TempDir(), "boxe.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

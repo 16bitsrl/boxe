@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -86,7 +87,7 @@ func newWebTest(t *testing.T) *webTest {
 		io.WriteString(w, "hello from "+r.Host)
 	}))
 	t.Cleanup(wt.backend.Close)
-	store, err := openStore(filepath.Join(t.TempDir(), "box.db"))
+	store, err := openStore(filepath.Join(t.TempDir(), "boxe.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +97,7 @@ func newWebTest(t *testing.T) *webTest {
 		}
 	}
 	wt.web = NewWeb(WebConfig{
-		Domain:       "box.example",
+		Domain:       "boxe.example",
 		Issuer:       wt.idp.URL,
 		ClientID:     "client",
 		ClientSecret: "secret",
@@ -116,7 +117,7 @@ type browser struct {
 	wt   *webTest
 	jar  *cookiejar.Jar
 	code string
-	set  []*http.Cookie // every cookie boxd asked to set
+	set  []*http.Cookie // every cookie boxed asked to set
 }
 
 func (wt *webTest) browser(code string) *browser {
@@ -124,10 +125,14 @@ func (wt *webTest) browser(code string) *browser {
 	return &browser{wt: wt, jar: jar, code: code}
 }
 
-// do sends one request to boxd, without following redirects.
+// do sends one GET to boxed, without following redirects.
 func (b *browser) do(rawURL string, header http.Header) *http.Response {
+	return b.send("GET", rawURL, header)
+}
+
+func (b *browser) send(method, rawURL string, header http.Header) *http.Response {
 	u, _ := url.Parse(rawURL)
-	r := httptest.NewRequest("GET", u.RequestURI(), nil)
+	r := httptest.NewRequest(method, u.RequestURI(), nil)
 	r.Host = u.Host
 	for k, v := range header {
 		r.Header[k] = v
@@ -157,7 +162,7 @@ func (b *browser) get(rawURL string, header http.Header) *http.Response {
 		if strings.HasPrefix(loc.String(), b.wt.idp.URL+"/authorize") {
 			b.wt.idp.authorizes.Add(1)
 			q := loc.Query()
-			if q.Get("client_id") != "client" || q.Get("redirect_uri") != "https://box.example/oauth/callback" {
+			if q.Get("client_id") != "client" || q.Get("redirect_uri") != "https://boxe.example/oauth/callback" {
 				b.wt.t.Fatalf("authorize query %v", q)
 			}
 			loc, _ = url.Parse(q.Get("redirect_uri") + "?" + url.Values{"code": {b.code}, "state": {q.Get("state")}}.Encode())
@@ -176,10 +181,10 @@ func body(res *http.Response) string {
 func TestWebLoginAndProxy(t *testing.T) {
 	wt := newWebTest(t)
 	b := wt.browser("member")
-	b.jar.SetCookies(&url.URL{Scheme: "https", Host: "test.box.example"}, []*http.Cookie{{Name: "app", Value: "mine"}})
+	b.jar.SetCookies(&url.URL{Scheme: "https", Host: "test.boxe.example"}, []*http.Cookie{{Name: "app", Value: "mine"}})
 
-	res := b.get("https://test.box.example/app?x=1", http.Header{"X-Box-Email": {"boss@example.com"}})
-	if res.StatusCode != 200 || body(res) != "hello from test.box.example" {
+	res := b.get("https://test.boxe.example/app?x=1", http.Header{"X-Box-Email": {"boss@example.com"}})
+	if res.StatusCode != 200 || body(res) != "hello from test.boxe.example" {
 		t.Fatalf("after login: %d", res.StatusCode)
 	}
 	r := wt.seen
@@ -193,8 +198,8 @@ func TestWebLoginAndProxy(t *testing.T) {
 		t.Errorf("X-Forwarded-Proto %q", r.Header.Get("X-Forwarded-Proto"))
 	}
 	for _, c := range r.Cookies() {
-		if strings.Contains(c.Name, "box_") {
-			t.Errorf("the VM received the box cookie %s", c.Name)
+		if strings.Contains(c.Name, "boxe_") {
+			t.Errorf("the VM received the boxe cookie %s", c.Name)
 		}
 	}
 	if c, err := r.Cookie("app"); err != nil || c.Value != "mine" {
@@ -202,15 +207,15 @@ func TestWebLoginAndProxy(t *testing.T) {
 	}
 
 	// Another VM: no new login at the IdP.
-	res = b.get("https://other.box.example/", nil)
-	if res.StatusCode != 200 || body(res) != "hello from other.box.example" {
+	res = b.get("https://other.boxe.example/", nil)
+	if res.StatusCode != 200 || body(res) != "hello from other.boxe.example" {
 		t.Fatalf("second VM: %d", res.StatusCode)
 	}
 	if n := wt.idp.authorizes.Load(); n != 1 {
 		t.Errorf("%d logins at the IdP, want 1", n)
 	}
 
-	if res := b.get("https://nope.box.example/", nil); res.StatusCode != http.StatusNotFound {
+	if res := b.get("https://nope.boxe.example/", nil); res.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown VM: %d, want 404", res.StatusCode)
 	}
 }
@@ -218,7 +223,7 @@ func TestWebLoginAndProxy(t *testing.T) {
 func TestWebSessionCookiesAreHostOnly(t *testing.T) {
 	wt := newWebTest(t)
 	b := wt.browser("member")
-	if res := b.get("https://test.box.example/", nil); res.StatusCode != 200 {
+	if res := b.get("https://test.boxe.example/", nil); res.StatusCode != 200 {
 		t.Fatalf("login: %d", res.StatusCode)
 	}
 	if len(b.set) < 3 {
@@ -233,7 +238,7 @@ func TestWebSessionCookiesAreHostOnly(t *testing.T) {
 
 func TestWebRejectsOtherOrganizations(t *testing.T) {
 	wt := newWebTest(t)
-	res := wt.browser("outsider").get("https://test.box.example/", nil)
+	res := wt.browser("outsider").get("https://test.boxe.example/", nil)
 	if res.StatusCode != http.StatusForbidden {
 		t.Fatalf("outsider: %d, want 403", res.StatusCode)
 	}
@@ -242,13 +247,13 @@ func TestWebRejectsOtherOrganizations(t *testing.T) {
 func TestWebStateIsNotASession(t *testing.T) {
 	wt := newWebTest(t)
 	b := wt.browser("member")
-	res := b.do("https://box.example/__box/login?r="+url.QueryEscape("https://test.box.example/"), nil)
+	res := b.do("https://boxe.example/__boxe/login?r="+url.QueryEscape("https://test.boxe.example/"), nil)
 	loc, _ := url.Parse(res.Header.Get("Location"))
 	state := loc.Query().Get("state")
-	for _, name := range []string{"__Host-box_session", "box_session"} {
+	for _, name := range []string{"__Host-boxe_session", "boxe_session"} {
 		evil := wt.browser("member")
-		evil.jar.SetCookies(&url.URL{Scheme: "https", Host: "test.box.example"}, []*http.Cookie{{Name: name, Value: state}})
-		if res := evil.do("https://test.box.example/", nil); res.StatusCode != http.StatusFound || wt.seen != nil {
+		evil.jar.SetCookies(&url.URL{Scheme: "https", Host: "test.boxe.example"}, []*http.Cookie{{Name: name, Value: state}})
+		if res := evil.do("https://test.boxe.example/", nil); res.StatusCode != http.StatusFound || wt.seen != nil {
 			t.Errorf("state as %s: %d, the request reached the VM: %v", name, res.StatusCode, wt.seen != nil)
 		}
 	}
@@ -257,14 +262,14 @@ func TestWebStateIsNotASession(t *testing.T) {
 func TestWebHandoffIsBoundToItsHost(t *testing.T) {
 	wt := newWebTest(t)
 	b := wt.browser("member")
-	b.get("https://box.example/__box/login?r="+url.QueryEscape("https://test.box.example/"), nil)
-	// Logged in on box.example: the next login hands off without the IdP.
-	res := b.do("https://box.example/__box/login?r="+url.QueryEscape("https://test.box.example/"), nil)
+	b.get("https://boxe.example/__boxe/login?r="+url.QueryEscape("https://test.boxe.example/"), nil)
+	// Logged in on boxe.example: the next login hands off without the IdP.
+	res := b.do("https://boxe.example/__boxe/login?r="+url.QueryEscape("https://test.boxe.example/"), nil)
 	handoff, _ := url.Parse(res.Header.Get("Location"))
-	if handoff.Host != "test.box.example" {
+	if handoff.Host != "test.boxe.example" {
 		t.Fatalf("handoff to %s", handoff)
 	}
-	handoff.Host = "other.box.example"
+	handoff.Host = "other.boxe.example"
 	evil := wt.browser("member")
 	if res := evil.do(handoff.String(), nil); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("handoff on another host: %d, want 400", res.StatusCode)
@@ -273,8 +278,8 @@ func TestWebHandoffIsBoundToItsHost(t *testing.T) {
 
 func TestWebLoginReturnsOnlyToVMs(t *testing.T) {
 	wt := newWebTest(t)
-	for _, r := range []string{"https://evil.com/", "https://box.example.evil.com/", "//evil.com/", "http://test.box.example/"} {
-		res := wt.browser("member").do("https://box.example/__box/login?r="+url.QueryEscape(r), nil)
+	for _, r := range []string{"https://evil.com/", "https://boxe.example.evil.com/", "//evil.com/", "http://test.boxe.example/"} {
+		res := wt.browser("member").do("https://boxe.example/__boxe/login?r="+url.QueryEscape(r), nil)
 		if res.StatusCode != http.StatusBadRequest {
 			t.Errorf("return to %s: %d, want 400", r, res.StatusCode)
 		}
@@ -284,13 +289,13 @@ func TestWebLoginReturnsOnlyToVMs(t *testing.T) {
 func TestWebVMCannotSetBoxCookies(t *testing.T) {
 	wt := newWebTest(t)
 	b := wt.browser("member")
-	b.get("https://test.box.example/", nil)
+	b.get("https://test.boxe.example/", nil)
 	wt.reply = func(w http.ResponseWriter) {
-		w.Header().Add("Set-Cookie", "__Host-box_session=evil; Path=/; Secure; HttpOnly")
-		w.Header().Add("Set-Cookie", "box_session=evil; Domain=box.example; Path=/")
+		w.Header().Add("Set-Cookie", "__Host-boxe_session=evil; Path=/; Secure; HttpOnly")
+		w.Header().Add("Set-Cookie", "boxe_session=evil; Domain=boxe.example; Path=/")
 		w.Header().Add("Set-Cookie", "app=1; Path=/")
 	}
-	res := b.do("https://test.box.example/", nil)
+	res := b.do("https://test.boxe.example/", nil)
 	var names []string
 	for _, c := range res.Cookies() {
 		names = append(names, c.Name)
@@ -303,11 +308,11 @@ func TestWebVMCannotSetBoxCookies(t *testing.T) {
 func TestWebRejectsForgedStateAndCookies(t *testing.T) {
 	wt := newWebTest(t)
 	b := wt.browser("member")
-	if res := b.do("https://box.example/oauth/callback?code=member&state=forged", nil); res.StatusCode != http.StatusBadRequest {
+	if res := b.do("https://boxe.example/oauth/callback?code=member&state=forged", nil); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("forged state: %d, want 400", res.StatusCode)
 	}
-	b.jar.SetCookies(&url.URL{Scheme: "https", Host: "test.box.example"}, []*http.Cookie{{Name: "__Host-box_session", Value: "eyJlIjoibXRAMTZiaXQuaXQifQ.AAAA"}})
-	if res := b.do("https://test.box.example/", nil); res.StatusCode != http.StatusFound {
+	b.jar.SetCookies(&url.URL{Scheme: "https", Host: "test.boxe.example"}, []*http.Cookie{{Name: "__Host-boxe_session", Value: "eyJlIjoibXRAMTZiaXQuaXQifQ.AAAA"}})
+	if res := b.do("https://test.boxe.example/", nil); res.StatusCode != http.StatusFound {
 		t.Errorf("forged session: %d, want redirect to login", res.StatusCode)
 	}
 }
@@ -315,9 +320,9 @@ func TestWebRejectsForgedStateAndCookies(t *testing.T) {
 func TestWebVMDown(t *testing.T) {
 	wt := newWebTest(t)
 	b := wt.browser("member")
-	b.get("https://test.box.example/", nil)
+	b.get("https://test.boxe.example/", nil)
 	wt.backend.Close()
-	if res := b.do("https://test.box.example/", nil); res.StatusCode != http.StatusBadGateway {
+	if res := b.do("https://test.boxe.example/", nil); res.StatusCode != http.StatusBadGateway {
 		t.Errorf("VM not answering: %d, want 502", res.StatusCode)
 	}
 }
@@ -325,11 +330,11 @@ func TestWebVMDown(t *testing.T) {
 func TestWebIdPDownAtStart(t *testing.T) {
 	wt := newWebTest(t)
 	wt.idp.up.Store(false)
-	if res := wt.browser("member").get("https://test.box.example/", nil); res.StatusCode != http.StatusServiceUnavailable {
+	if res := wt.browser("member").get("https://test.boxe.example/", nil); res.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("IdP down: %d, want 503", res.StatusCode)
 	}
 	wt.idp.up.Store(true)
-	if res := wt.browser("member").get("https://test.box.example/", nil); res.StatusCode != 200 {
+	if res := wt.browser("member").get("https://test.boxe.example/", nil); res.StatusCode != 200 {
 		t.Errorf("IdP back: %d, want 200", res.StatusCode)
 	}
 }
@@ -338,32 +343,32 @@ func TestWebIdPDownAtStart(t *testing.T) {
 func TestWebOtherPorts(t *testing.T) {
 	wt := newWebTest(t)
 	b := wt.browser("member")
-	if res := b.get("https://test.box.example/", nil); res.StatusCode != 200 || wt.port != 8000 {
+	if res := b.get("https://test.boxe.example/", nil); res.StatusCode != 200 || wt.port != 8000 {
 		t.Fatalf("default: %d, port %d, want 200 on 8000", res.StatusCode, wt.port)
 	}
-	res := b.get("https://test--3000.box.example/x", nil)
+	res := b.get("https://test--3000.boxe.example/x", nil)
 	if res.StatusCode != 200 || wt.port != 3000 {
 		t.Fatalf("test--3000: %d, port %d, want 200 on 3000", res.StatusCode, wt.port)
 	}
 	if got := wt.seen.Header.Get("X-Box-Email"); got != "alice@example.com" {
 		t.Errorf("X-Box-Email %q", got)
 	}
-	if wt.seen.Host != "test--3000.box.example" {
+	if wt.seen.Host != "test--3000.boxe.example" {
 		t.Errorf("Host %q", wt.seen.Host)
 	}
 	if n := wt.idp.authorizes.Load(); n != 1 {
 		t.Errorf("%d logins at the IdP, want 1", n)
 	}
 	for _, host := range []string{"test--80", "test--10000", "test--2999", "test--abc", "test--03000", "test--", "--3000", "test--3000--4000"} {
-		if res := b.do("https://"+host+".box.example/", nil); res.StatusCode != http.StatusNotFound {
+		if res := b.do("https://"+host+".boxe.example/", nil); res.StatusCode != http.StatusNotFound {
 			t.Errorf("%s: %d, want 404", host, res.StatusCode)
 		}
 	}
-	if res := b.do("https://box.example/__box/login?r="+url.QueryEscape("https://test--80.box.example/"), nil); res.StatusCode != http.StatusBadRequest {
+	if res := b.do("https://boxe.example/__boxe/login?r="+url.QueryEscape("https://test--80.boxe.example/"), nil); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("login to test--80: %d, want 400", res.StatusCode)
 	}
 	wt.backend.Close()
-	if res := b.do("https://test--3000.box.example/", nil); res.StatusCode != http.StatusBadGateway || !strings.Contains(body(res), "port 3000") {
+	if res := b.do("https://test--3000.boxe.example/", nil); res.StatusCode != http.StatusBadGateway || !strings.Contains(body(res), "port 3000") {
 		t.Errorf("VM down: %d, want 502 naming port 3000", res.StatusCode)
 	}
 }
@@ -373,7 +378,7 @@ func TestWebOtherPorts(t *testing.T) {
 func TestWebDoesNotReachAReplacedVM(t *testing.T) {
 	wt := newWebTest(t)
 	b := wt.browser("member")
-	b.get("https://test.box.example/", nil)
+	b.get("https://test.boxe.example/", nil)
 	store := wt.web.store
 	addr := wt.web.vmAddr
 	wt.web.vmAddr = func(v VM, port int) string {
@@ -383,7 +388,7 @@ func TestWebDoesNotReachAReplacedVM(t *testing.T) {
 		return addr(v, port)
 	}
 	wt.seen = nil
-	res := b.do("https://test.box.example/", nil)
+	res := b.do("https://test.boxe.example/", nil)
 	if wt.seen != nil {
 		t.Fatal("the request reached the VM that took the address")
 	}
@@ -397,23 +402,48 @@ func TestWebLogoutEndsEverySession(t *testing.T) {
 	wt := newWebTest(t)
 	b := wt.browser("member")
 	for _, h := range []string{"test", "other"} {
-		if res := b.get("https://"+h+".box.example/", nil); res.StatusCode != 200 {
+		if res := b.get("https://"+h+".boxe.example/", nil); res.StatusCode != 200 {
 			t.Fatalf("%s: %d", h, res.StatusCode)
 		}
 	}
 	time.Sleep(2 * time.Millisecond)
-	if res := b.do("https://box.example/logout", nil); res.StatusCode != 200 {
+	if res := b.send("POST", "https://boxe.example/logout", http.Header{"Sec-Fetch-Site": {"same-origin"}}); res.StatusCode != 200 {
 		t.Fatalf("logout: %d", res.StatusCode)
 	}
 	for _, h := range []string{"test", "other"} {
-		if res := b.do("https://"+h+".box.example/", nil); res.StatusCode != http.StatusFound {
+		if res := b.do("https://"+h+".boxe.example/", nil); res.StatusCode != http.StatusFound {
 			t.Errorf("%s after logout: %d, want a redirect to login", h, res.StatusCode)
 		}
 	}
 	// A new login works again.
 	time.Sleep(2 * time.Millisecond)
-	if res := b.get("https://test.box.example/", nil); res.StatusCode != 200 {
+	if res := b.get("https://test.boxe.example/", nil); res.StatusCode != 200 {
 		t.Errorf("login after logout: %d", res.StatusCode)
+	}
+}
+
+// A VM's page must not log members out: an <img src=".../logout"> sends a
+// GET, a form or fetch on a VM's host sends a cross-origin POST.
+func TestWebLogoutFromAVMPageDoesNothing(t *testing.T) {
+	wt := newWebTest(t)
+	b := wt.browser("member")
+	if res := b.get("https://test.boxe.example/", nil); res.StatusCode != 200 {
+		t.Fatalf("login: %d", res.StatusCode)
+	}
+	time.Sleep(2 * time.Millisecond)
+	b.do("https://boxe.example/logout", http.Header{"Sec-Fetch-Site": {"same-site"}})
+	if res := b.send("POST", "https://boxe.example/logout", http.Header{
+		"Sec-Fetch-Site": {"same-site"}, "Origin": {"https://test.boxe.example"}}); res.StatusCode != http.StatusForbidden {
+		t.Errorf("cross-origin POST: %d, want 403", res.StatusCode)
+	}
+	if res := b.do("https://test.boxe.example/", nil); res.StatusCode != 200 {
+		t.Errorf("session ended by a VM's page: %d", res.StatusCode)
+	}
+	// Opened by hand, the page asks for a click.
+	res := b.do("https://boxe.example/logout", http.Header{"Sec-Fetch-Site": {"none"}})
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != 200 || !strings.Contains(string(body), `method="post"`) {
+		t.Errorf("logout page: %d %q", res.StatusCode, body)
 	}
 }
 
@@ -421,12 +451,12 @@ func TestWebLogoutEndsEverySession(t *testing.T) {
 func TestWebRevokeUser(t *testing.T) {
 	wt := newWebTest(t)
 	b := wt.browser("member")
-	b.get("https://test.box.example/", nil)
+	b.get("https://test.boxe.example/", nil)
 	time.Sleep(2 * time.Millisecond)
 	if err := wt.web.store.Logout("alice@example.com", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if res := b.do("https://test.box.example/", nil); res.StatusCode != http.StatusFound {
+	if res := b.do("https://test.boxe.example/", nil); res.StatusCode != http.StatusFound {
 		t.Errorf("after revoke: %d, want a redirect to login", res.StatusCode)
 	}
 }
@@ -438,13 +468,13 @@ func TestWebSessionsEndAfterLogin(t *testing.T) {
 	now := time.Now()
 	wt.web.now = func() time.Time { return now }
 	b := wt.browser("member")
-	b.get("https://test.box.example/", nil)
+	b.get("https://test.boxe.example/", nil)
 	now = now.Add(authMaxAge - time.Hour)
-	if res := b.get("https://other.box.example/", nil); res.StatusCode != 200 || wt.idp.authorizes.Load() != 1 {
+	if res := b.get("https://other.boxe.example/", nil); res.StatusCode != 200 || wt.idp.authorizes.Load() != 1 {
 		t.Fatalf("before expiry: %d, %d logins", res.StatusCode, wt.idp.authorizes.Load())
 	}
 	now = now.Add(2 * time.Hour)
-	if res := b.do("https://other.box.example/", nil); res.StatusCode != http.StatusFound {
+	if res := b.do("https://other.boxe.example/", nil); res.StatusCode != http.StatusFound {
 		t.Errorf("after expiry: %d, want a redirect to login", res.StatusCode)
 	}
 }
@@ -453,12 +483,12 @@ func TestWebHealth(t *testing.T) {
 	wt := newWebTest(t)
 	var problems []string
 	wt.web.health = func() []string { return problems }
-	res := wt.browser("x").do("https://box.example/healthz", nil)
+	res := wt.browser("x").do("https://boxe.example/healthz", nil)
 	if res.StatusCode != 200 || body(res) != "ok\n" {
 		t.Errorf("healthy: %d", res.StatusCode)
 	}
 	problems = []string{"backup: last one 40h ago"}
-	res = wt.browser("x").do("https://box.example/healthz", nil)
+	res = wt.browser("x").do("https://boxe.example/healthz", nil)
 	if res.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body(res), "backup") {
 		t.Errorf("unhealthy: %d", res.StatusCode)
 	}
@@ -469,15 +499,45 @@ func TestWebEmailDomains(t *testing.T) {
 	wt := newWebTest(t)
 	wt.web.cfg.OrgID = ""
 	wt.web.cfg.EmailDomains = []string{"example.com"}
-	if res := wt.browser("member").get("https://test.box.example/", nil); res.StatusCode != 200 {
+	if res := wt.browser("member").get("https://test.boxe.example/", nil); res.StatusCode != 200 {
 		t.Errorf("allowed domain: %d", res.StatusCode)
 	}
 	wt.web.cfg.EmailDomains = []string{"example.org"}
-	if res := wt.browser("member").get("https://test.box.example/", nil); res.StatusCode != http.StatusForbidden {
+	if res := wt.browser("member").get("https://test.boxe.example/", nil); res.StatusCode != http.StatusForbidden {
 		t.Errorf("other domain: %d, want 403", res.StatusCode)
 	}
 	wt.web.cfg.EmailDomains = nil
-	if res := wt.browser("member").get("https://test.box.example/", nil); res.StatusCode != http.StatusForbidden {
+	if res := wt.browser("member").get("https://test.boxe.example/", nil); res.StatusCode != http.StatusForbidden {
 		t.Errorf("no rule at all: %d, want 403 (nobody gets in by default)", res.StatusCode)
+	}
+}
+
+// Opening a sleeping VM's page wakes it up first; while a request is open
+// the VM counts as in use.
+func TestWebWakesTheVM(t *testing.T) {
+	wt := newWebTest(t)
+	var woken []string
+	inUse := map[string]int{}
+	wt.web.wake = func(name string) error { woken = append(woken, name); return nil }
+	wt.web.busy = func(name string, d int) { inUse[name] += d }
+	wt.reply = func(http.ResponseWriter) {
+		if inUse["test"] != 1 {
+			t.Errorf("during the request the VM is in use %d times, want 1", inUse["test"])
+		}
+	}
+	b := wt.browser("member")
+	if res := b.get("https://test.boxe.example/", nil); res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	if len(woken) != 1 || woken[0] != "test" {
+		t.Errorf("woken %v", woken)
+	}
+	if inUse["test"] != 0 {
+		t.Errorf("still in use after the request: %d", inUse["test"])
+	}
+
+	wt.web.wake = func(string) error { return errors.New("could not wake test up") }
+	if res := b.get("https://test.boxe.example/", nil); res.StatusCode != http.StatusBadGateway || !strings.Contains(body(res), "could not wake") {
+		t.Errorf("failed wake: %d", res.StatusCode)
 	}
 }

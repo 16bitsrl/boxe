@@ -1,0 +1,24 @@
+#!/bin/bash
+# PID 1 of the microVM. Applies the configuration from the host (see
+# boxe-config.sh), then starts exeuntu's init. Before systemd, so hostname
+# and machine-id are right from the first moment. The host never mounts the
+# VM's disk.
+#
+# Fails closed: without a valid configuration the VM powers off instead of
+# booting with another VM's keys (a copy carries its source's).
+. /usr/local/lib/boxe/config.sh
+
+fail() {
+    echo "boxe-init: $*: powering off" >&2
+    # No systemd yet: ask the kernel directly.
+    mount -t proc proc /proc 2>/dev/null
+    echo o >/proc/sysrq-trigger
+    sleep infinity
+}
+
+err=$(boxe_apply_config 2>&1)
+case $? in
+0 | 2) ;;
+*) fail "$err" ;;
+esac
+exec /usr/local/bin/init "$@"

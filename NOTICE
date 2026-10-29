@@ -7,7 +7,12 @@ The VM base image (image/) is built on exeuntu by Bold Software, the image
 of exe.dev, also under the Apache License 2.0:
 https://github.com/boldsoftware/exeuntu
 image/Dockerfile starts from a pinned exeuntu release and adds our layer:
-image/box-init, image/box-welcome.sh, image/sshd-box.conf,
-image/ssh-early.conf, image/box-sshkeys.service, and the changes made by the
+image/boxe-init, image/boxe-welcome.sh, image/sshd-boxe.conf,
+image/ssh-early.conf, image/boxe-sshkeys.service, and the changes made by the
 RUN steps of image/Dockerfile (SSH as a plain service, no nologin, welcome
 message, instructions for coding agents).
+
+The image also includes Shelley by Bold Software, under the Apache License
+2.0, unmodified: https://github.com/boldsoftware/shelley
+image/shelley-socket.conf and image/shelley-service.conf change how it is
+started (port, no exe.dev gateway).

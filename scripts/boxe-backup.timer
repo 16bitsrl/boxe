@@ -1,5 +1,5 @@
 [Unit]
-Description=Nightly backup of box
+Description=Nightly backup of boxe
 
 [Timer]
 OnCalendar=*-*-* 03:30

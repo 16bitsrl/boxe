@@ -1,12 +1,12 @@
 #!/bin/bash
 # Exports a container image to an ext4 zvol and takes its @base snapshot.
 # Usage: sudo build-base.sh <image> <dataset-name> [size]
-# e.g.   sudo build-base.sh boxuntu:20261029 boxuntu-20261029
+# e.g.   sudo build-base.sh boxeuntu:20261029 boxeuntu-20261029
 # Names are never reused: VMs are clones of the snapshot, so an image in use
 # cannot be rebuilt in place. On failure nothing is left behind.
 set -euo pipefail
 IMAGE=$1 NAME=$2 SIZE=${3:-20G}
-DS=exe/images/$NAME DEV=/dev/zvol/$DS MNT=$(mktemp -d)
+DS=boxe/images/$NAME DEV=/dev/zvol/$DS MNT=$(mktemp -d)
 CID=""
 
 if zfs list "$DS" >/dev/null 2>&1; then

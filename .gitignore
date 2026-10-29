@@ -4,7 +4,7 @@
 # Build output
 dist/
 # Never commit an installation's state or secrets: they live on the
-# exe-host in /etc/exe and /var/lib/exe.
+# host in /etc/boxe and /var/lib/boxe.
 *.db
 *.db-*
 *.tar
@@ -13,7 +13,7 @@ dist/
 web_secret
 oidc
 backup.conf
-boxd.env
+boxed.env
 net.conf
 ts-authkey
 tsnet/

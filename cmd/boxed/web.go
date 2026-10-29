@@ -22,7 +22,9 @@ import (
 
 // Web serves https://<vm>.<domain>, port 8000 of the VM, and
 // https://<vm>--<port>.<domain> for ports 3000-9999, to members of the team
-// logged in on the IdP. TLS ends at the proxy in front of boxd.
+// logged in on the IdP, and to whoever opens a share link for that host;
+// https://<vm>--agent.<domain> (Shelley) and https://<vm>--desktop.<domain>
+// (noVNC) only to the VM's owner. TLS ends at the proxy in front of boxed.
 //
 // VMs are untrusted, so each host has its own host-only session cookie that
 // no other host can read or set. The login happens once on <domain>, which
@@ -33,14 +35,19 @@ type Web struct {
 	vmAddr func(v VM, port int) string
 	vmLock *sync.RWMutex // Box.mu: VMs do not change while a connection to one opens
 	now    func() time.Time
-	health func() []string // problems for /healthz; nil: always ok
+	health func() []string              // problems for /healthz; nil: always ok
+	wake   func(name string) error      // wakes a sleeping VM; nil: VMs never sleep
+	busy   func(name string, delta int) // a request to the VM starts (+1) or ends (-1)
+	// ownerEmail is the IdP email of a VM owner (a GitHub user); "" if not
+	// known, and then nobody gets to their agent.
+	ownerEmail func(user string) string
 
 	mu  sync.Mutex
 	idp struct{ Auth, Token, Userinfo string } // from discovery, on first use
 }
 
 type WebConfig struct {
-	Domain                 string // e.g. box.example.com
+	Domain                 string // e.g. boxe.example.com
 	Issuer                 string // OIDC issuer, e.g. https://login.example.com
 	ClientID, ClientSecret string
 	OrgID                  string   // Zitadel organization whose users get in, or:
@@ -49,13 +56,20 @@ type WebConfig struct {
 }
 
 const (
-	sessionCookie = "__Host-box_session"
-	stateCookie   = "__Host-box_state"
+	sessionCookie = "__Host-boxe_session"
+	stateCookie   = "__Host-boxe_state"
+	shareCookie   = "__Host-boxe_share" // a visitor who opened a share link
+	shareMaxAge   = 7 * 24 * time.Hour  // then they open the link again
 	// Every session ends this long after the login at the IdP, wherever and
 	// whenever it was handed on: who leaves the team loses access within it.
 	authMaxAge = 12 * time.Hour
 	vmWebPort  = 8000
 	minVMPort  = 3000 // other ports: <vm>--<port>, 3000-9999
+	// Shelley in the VM (image/shelley.socket): <vm>--agent, owner only.
+	// Below minVMPort, so not reachable as <vm>--<port>.
+	agentWebPort = 2999
+	// noVNC in the VM (image/boxe-desktop-web.socket): <vm>--desktop, owner only.
+	desktopWebPort = 2998
 )
 
 func NewWeb(cfg WebConfig, store *Store) *Web {
@@ -65,7 +79,7 @@ func NewWeb(cfg WebConfig, store *Store) *Web {
 }
 
 // endpoints runs OIDC discovery once it succeeds; until then every login
-// tries again, so boxd starts even when the IdP is down.
+// tries again, so boxed starts even when the IdP is down.
 func (w *Web) endpoints() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -95,7 +109,7 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 	if host == w.cfg.Domain {
 		switch r.URL.Path {
-		case "/__box/login":
+		case "/__boxe/login":
 			w.login(rw, r)
 		case "/oauth/callback":
 			w.callback(rw, r)
@@ -111,6 +125,17 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			}
 			io.WriteString(rw, "ok\n")
 		case "/logout":
+			// Only a POST from this page: VM pages are same-site and could
+			// otherwise log members out with an image or a form.
+			if r.Method != http.MethodPost {
+				rw.Header().Set("Content-Type", "text/html; charset=utf-8")
+				io.WriteString(rw, `<!doctype html><title>Log out</title><form method="post"><button>Log out of every VM</button></form>`)
+				return
+			}
+			if err := http.NewCrossOriginProtection().Check(r); err != nil {
+				http.Error(rw, "Log out from "+w.cfg.Domain+"/logout.", http.StatusForbidden)
+				return
+			}
 			if s, ok := w.session(r, w.cfg.Domain); ok {
 				if err := w.store.Logout(s.E, w.now()); err != nil {
 					log.Printf("web: logout %s: %v", s.E, err)
@@ -122,7 +147,7 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			http.SetCookie(rw, cookie(sessionCookie, "", -1))
 			io.WriteString(rw, "Logged out of every VM.\n")
 		default:
-			io.WriteString(rw, "box: microVMs for the team.\nhttps://<vm>."+w.cfg.Domain+" shows port 8000 of the VM, https://<vm>--3000."+w.cfg.Domain+" port 3000 (3000-9999).\n")
+			io.WriteString(rw, "boxe: microVMs for the team.\nhttps://<vm>."+w.cfg.Domain+" shows port 8000 of the VM, https://<vm>--3000."+w.cfg.Domain+" port 3000 (3000-9999).\n")
 		}
 		return
 	}
@@ -131,13 +156,20 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		http.NotFound(rw, r)
 		return
 	}
-	if r.URL.Path == "/__box/session" {
+	if r.URL.Path == "/__boxe/session" {
 		w.acceptHandoff(rw, r, host)
 		return
 	}
-	s, ok := w.session(r, host)
-	if !ok {
-		http.Redirect(rw, r, "https://"+w.cfg.Domain+"/__box/login?"+url.Values{"r": {"https://" + host + r.URL.RequestURI()}}.Encode(), http.StatusFound)
+	if token, ok := strings.CutPrefix(r.URL.Path, "/__boxe/share/"); ok {
+		w.openShare(rw, r, host, name, port, token)
+		return
+	}
+	// A member is themself; a visitor with a share link is nobody.
+	email := ""
+	if s, ok := w.session(r, host); ok {
+		email = s.E
+	} else if !w.shared(r, host, name, port) {
+		http.Redirect(rw, r, "https://"+w.cfg.Domain+"/__boxe/login?"+url.Values{"r": {"https://" + host + r.URL.RequestURI()}}.Encode(), http.StatusFound)
 		return
 	}
 	v, err := w.store.Get(name)
@@ -145,7 +177,65 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "There is no VM named "+name+".", http.StatusNotFound)
 		return
 	}
-	w.proxy(v, port, s.E).ServeHTTP(rw, r)
+	if port == agentWebPort || port == desktopWebPort {
+		// The agent and the desktop are a shell in the VM: its owner's
+		// only. VM pages are same-site, so one of them could otherwise post
+		// to them, or open a WebSocket, with the owner's session.
+		what := map[int]string{agentWebPort: "agent", desktopWebPort: "desktop"}[port]
+		if w.ownerEmail == nil || email == "" || w.ownerEmail(v.Owner) != strings.ToLower(email) {
+			http.Error(rw, "Only "+v.Owner+" can use the "+what+" of "+v.Name+".", http.StatusForbidden)
+			return
+		}
+		if err := http.NewCrossOriginProtection().Check(r); err != nil {
+			http.Error(rw, "Requests to the "+what+" must come from its own page.", http.StatusForbidden)
+			return
+		}
+		if r.Header.Get("Upgrade") != "" && r.Header.Get("Origin") != "https://"+host {
+			http.Error(rw, "Connections to the "+what+" must come from its own page.", http.StatusForbidden)
+			return
+		}
+	}
+	if w.wake != nil {
+		if err := w.wake(v.Name); err != nil {
+			http.Error(rw, err.Error()+".", http.StatusBadGateway)
+			return
+		}
+	}
+	if w.busy != nil {
+		w.busy(v.Name, 1)
+		defer w.busy(v.Name, -1)
+	}
+	w.proxy(v, port, email).ServeHTTP(rw, r)
+}
+
+// openShare lets the visitor in with a share link: a host-only cookie for
+// this host, then the page without the token, which the VM never sees.
+func (w *Web) openShare(rw http.ResponseWriter, r *http.Request, host, name string, port int, token string) {
+	vm, idx, p, ok := w.store.Shared(token)
+	v, err := w.store.Get(name)
+	if !ok || err != nil || vm != name || idx != v.Index || p != port {
+		http.Error(rw, "This link does not work: it was never valid, or it was withdrawn.", http.StatusNotFound)
+		return
+	}
+	http.SetCookie(rw, cookie(shareCookie, w.sign(claims{P: "share", H: host, T: token}, shareMaxAge), int(shareMaxAge.Seconds())))
+	rw.Header().Set("Referrer-Policy", "no-referrer")
+	http.Redirect(rw, r, "/", http.StatusFound)
+}
+
+// shared says whether the request comes with a share link, still valid,
+// for this host.
+func (w *Web) shared(r *http.Request, host, name string, port int) bool {
+	c, err := r.Cookie(shareCookie)
+	if err != nil {
+		return false
+	}
+	s, ok := w.verify(c.Value, "share")
+	if !ok || s.H != host {
+		return false
+	}
+	vm, idx, p, ok := w.store.Shared(s.T)
+	v, err := w.store.Get(name)
+	return ok && err == nil && vm == name && idx == v.Index && p == port
 }
 
 // vmHost returns the VM and its port for a host like <vm>.<domain> (port
@@ -161,6 +251,12 @@ func (w *Web) vmHost(host string) (name string, port int, ok bool) {
 	}
 	if !hasPort {
 		return name, vmWebPort, true
+	}
+	if p == "agent" {
+		return name, agentWebPort, true
+	}
+	if p == "desktop" {
+		return name, desktopWebPort, true
 	}
 	if len(p) != 4 || p[0] == '0' || strings.Trim(p, "0123456789") != "" {
 		return "", 0, false
@@ -258,7 +354,7 @@ func (w *Web) callback(rw http.ResponseWriter, r *http.Request) {
 func (w *Web) handoff(rw http.ResponseWriter, r *http.Request, s claims, ret *url.URL) {
 	path := ret.RequestURI()
 	t := w.sign(claims{P: "handoff", E: s.E, A: s.A, H: ret.Host, R: path}, time.Minute)
-	http.Redirect(rw, r, "https://"+ret.Host+"/__box/session?"+url.Values{"t": {t}}.Encode(), http.StatusFound)
+	http.Redirect(rw, r, "https://"+ret.Host+"/__boxe/session?"+url.Values{"t": {t}}.Encode(), http.StatusFound)
 }
 
 func (w *Web) acceptHandoff(rw http.ResponseWriter, r *http.Request, host string) {
@@ -333,14 +429,15 @@ func doJSON(req *http.Request, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-// isBoxCookie tells the cookies of box apart from the app's own: the VM
+// isBoxCookie tells the cookies of boxe apart from the app's own: the VM
 // must neither read nor set them.
 func isBoxCookie(name string) bool {
 	name = strings.TrimPrefix(strings.TrimPrefix(name, "__Host-"), "__Secure-")
-	return strings.HasPrefix(strings.ToLower(name), "box_")
+	return strings.HasPrefix(strings.ToLower(name), "boxe_")
 }
 
-// proxy forwards to the VM with the user's identity in X-Box-Email.
+// proxy forwards to the VM with the user's identity in X-Box-Email; none
+// for a visitor with a share link (email empty).
 func (w *Web) proxy(v VM, port int, email string) http.Handler {
 	target := &url.URL{Scheme: "http", Host: w.vmAddr(v, port)}
 	// Connect only while v is still the VM at this address, as the SSH jump
@@ -374,7 +471,9 @@ func (w *Web) proxy(v VM, port int, email string) http.Handler {
 					pr.Out.Header.Del(k)
 				}
 			}
-			pr.Out.Header.Set("X-Box-Email", email)
+			if email != "" {
+				pr.Out.Header.Set("X-Box-Email", email)
+			}
 			pr.Out.Header.Del("Cookie")
 			for _, c := range pr.In.Cookies() {
 				if !isBoxCookie(c.Name) {
@@ -410,7 +509,7 @@ func cookie(name, value string, maxAge int) *http.Cookie {
 }
 
 // claims of the signed tokens. P is the purpose: a token made for one
-// purpose (state, handoff, session) is never accepted for another.
+// purpose (state, handoff, session, share) is never accepted for another.
 type claims struct {
 	P string `json:"p"`
 	X int64  `json:"x"`
@@ -419,6 +518,7 @@ type claims struct {
 	R string `json:"r,omitempty"` // where to go next
 	N string `json:"n,omitempty"` // nonce, also in the state cookie
 	A int64  `json:"a,omitempty"` // login at the IdP, Unix milliseconds
+	T string `json:"t,omitempty"` // share token
 }
 
 // sign returns base64(json(claims)).base64(hmac).

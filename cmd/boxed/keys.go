@@ -23,6 +23,7 @@ type Keys struct {
 	mu     sync.RWMutex
 	byKey  map[string]string // marshalled public key -> user
 	byUser map[string]string // user -> authorized_keys lines
+	emails map[string]string // user -> email at the IdP, if given
 	lastOK time.Time         // last refresh where GitHub answered for everyone
 }
 
@@ -52,8 +53,15 @@ func (k *Keys) AuthorizedKeys(user string) string {
 	return k.byUser[user]
 }
 
+// Email is user's email at the IdP, from the users file; "" if not given.
+func (k *Keys) Email(user string) string {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return k.emails[user]
+}
+
 func (k *Keys) Refresh() {
-	users, err := readUsers(k.usersFile)
+	users, emails, err := readUsers(k.usersFile)
 	if err != nil {
 		log.Printf("keys: %v", err)
 		return
@@ -83,6 +91,9 @@ func (k *Keys) Refresh() {
 		}
 	}
 	k.set(byKey, byUser)
+	k.mu.Lock()
+	k.emails = emails
+	k.mu.Unlock()
 	if allOK {
 		k.mu.Lock()
 		k.lastOK = time.Now()
@@ -99,21 +110,27 @@ func (k *Keys) set(byKey, byUser map[string]string) {
 	k.mu.Unlock()
 }
 
-func readUsers(path string) ([]string, error) {
+// readUsers reads the users file: one GitHub username per line, optionally
+// followed by the member's email at the IdP.
+func readUsers(path string) (users []string, emails map[string]string, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
-	var users []string
+	emails = map[string]string{}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line != "" && !strings.HasPrefix(line, "#") {
-			users = append(users, line)
+		fields := strings.Fields(sc.Text())
+		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
+			continue
+		}
+		users = append(users, fields[0])
+		if len(fields) > 1 {
+			emails[fields[0]] = strings.ToLower(fields[1])
 		}
 	}
-	return users, sc.Err()
+	return users, emails, sc.Err()
 }
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}

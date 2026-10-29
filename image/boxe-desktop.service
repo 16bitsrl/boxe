@@ -1,0 +1,11 @@
+[Unit]
+Description=boxe desktop: X with VNC on localhost:5901 (DISPLAY=:1)
+
+[Service]
+User=exedev
+Environment=DISPLAY=:1 HOME=/home/exedev
+ExecStart=/usr/local/lib/boxe/desktop.sh
+# Ready once X answers: noVNC connects right after.
+ExecStartPost=/bin/sh -c 'until [ -S /tmp/.X11-unix/X1 ]; do sleep 0.1; done'
+TimeoutStartSec=20
+Restart=on-failure

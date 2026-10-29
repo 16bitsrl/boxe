@@ -1,0 +1,45 @@
+#!/bin/bash
+# Answers the host over vsock (port 1024), one command per connection:
+#
+#   ping          ok
+#   reconfigure   applies a new configuration disk while the VM runs: after
+#                 a fork the VM wakes up as a copy of its source, and takes
+#                 its own name, keys, MAC and IP address.
+#
+# Only the host can reach this port: vsock loopback is off in the kernel, so
+# programs in the VM cannot.
+. /usr/local/lib/boxe/config.sh
+
+reply() { echo "$*"; exit 0; }
+
+read -r -t 10 cmd || reply "error: no command"
+case $cmd in
+ping) reply ok ;;
+reconfigure)
+    # The host swapped the disk under us: drop what the kernel cached of it.
+    blockdev --flushbufs "$boxe_cfg" || reply "error: cannot read the configuration disk"
+    err=$(boxe_apply_config 2>&1)
+    case $? in
+    0) ;;
+    2) ;; # already applied: set up the rest again, it is idempotent
+    *) reply "error: $err" ;;
+    esac
+    . /etc/boxe/net || reply "error: no network configuration"
+    hostname "$(cat /etc/hostname)"
+    # The VM's only network card (eth0 at boot, renamed by udev).
+    dev=$(ip -o route show default | awk '{print $5; exit}')
+    [[ -n $dev ]] || for d in /sys/class/net/*; do [[ -e $d/device ]] && dev=${d##*/}; done
+    [[ -n $dev ]] || reply "error: no network card"
+    err=$({ ip link set "$dev" down &&
+        ip link set "$dev" address "$MAC" &&
+        ip addr flush dev "$dev" &&
+        ip addr add "$ADDRESS" dev "$dev" &&
+        ip link set "$dev" up &&
+        ip route replace default via "$GATEWAY"; } 2>&1) ||
+        reply "error: could not set up the network: $err"
+    # The new host key and certificate.
+    systemctl restart ssh
+    reply ok
+    ;;
+*) reply "error: unknown command" ;;
+esac

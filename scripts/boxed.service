@@ -1,0 +1,15 @@
+[Unit]
+Description=boxe: team microVMs (SSH to "boxe" on the tailnet)
+After=network-online.target boxe-net.service zfs.target
+Wants=network-online.target
+Requires=boxe-net.service
+
+[Service]
+# BOXED_FLAGS: this installation's settings (domain, OIDC, base image...), see boxed.env.example.
+EnvironmentFile=-/etc/boxe/boxed.env
+ExecStart=/usr/local/sbin/boxed $BOXED_FLAGS
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

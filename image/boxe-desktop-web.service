@@ -1,0 +1,10 @@
+[Unit]
+Description=boxe desktop in the browser (noVNC)
+Requires=boxe-desktop.service
+After=boxe-desktop.service
+
+[Service]
+User=exedev
+StandardInput=socket
+StandardOutput=journal
+ExecStart=/usr/bin/websockify --inetd --web /usr/share/novnc localhost:5901
