@@ -116,10 +116,30 @@ func (f *fakeHost) exec(_ time.Duration, name string, args ...string) ([]byte, e
 		return []byte(strings.Join(f.images, "\n") + "\n"), nil
 	case strings.HasPrefix(cmd, "zfs list -Hp -o name,referenced"):
 		return []byte(f.disk), nil
+	case strings.HasPrefix(cmd, "zfs list -H -o clones"):
+		var clones []string
+		for ds, snap := range f.origin {
+			if _, err := os.Stat(filepath.Join(f.devDir, ds)); err == nil && snap == args[len(args)-1] {
+				clones = append(clones, ds)
+			}
+		}
+		if len(clones) == 0 {
+			return []byte("-\n"), nil
+		}
+		return []byte(strings.Join(clones, ",") + "\n"), nil
 	case strings.HasPrefix(cmd, "zfs list"):
 		return []byte("-\n"), nil
 	case strings.HasPrefix(cmd, "zfs destroy -r"):
 		os.Remove(filepath.Join(f.devDir, args[len(args)-1]))
+	case strings.HasPrefix(cmd, "zfs destroy"):
+		target := args[len(args)-1]
+		kept := f.images[:0]
+		for _, snap := range f.images {
+			if snap != target && !strings.HasPrefix(snap, target+"@") {
+				kept = append(kept, snap)
+			}
+		}
+		f.images = kept
 	case strings.HasPrefix(cmd, "zfs get -H -o value origin"):
 		if o := f.origin[args[len(args)-1]]; o != "" {
 			return []byte(o + "\n"), nil

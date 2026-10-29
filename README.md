@@ -216,7 +216,10 @@ C8i/M8i/R8i).
   `image/laravel/Dockerfile` explains, under names like `<name>-<date>`
   (or `<name>-<date>-2` for a second one that day) next to the base
   image. `ssh boxe new --image <name>` picks the newest. Only admins build
-  images: a Dockerfile runs as root on the host.
+  images: a Dockerfile runs as root on the host. boxed deletes an older
+  version on its own once no VM uses it; the default image and the newest
+  of each name stay. The Docker images used to build them are not needed
+  afterwards.
 - **Backups:**
   - Every night `boxe-backup.timer` saves the state (database, keys, host
     CA, `/etc/boxe`) and every VM disk as a raw image to any restic

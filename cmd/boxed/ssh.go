@@ -771,10 +771,11 @@ func (b *Box) reap(now time.Time) {
 	}
 }
 
-// ReapLoop deletes expired VMs, every so often.
+// ReapLoop deletes expired VMs and old images, every so often.
 func (b *Box) ReapLoop(every time.Duration) {
 	for {
 		b.reap(time.Now())
+		b.pruneImages()
 		time.Sleep(every)
 	}
 }

@@ -65,3 +65,45 @@ func TestImages(t *testing.T) {
 		t.Error("a VM was recorded for a failed new")
 	}
 }
+
+// An image version nobody can pick any more (not the default, not the newest
+// of its name) is deleted once its last VM is gone, so the host does not
+// fill up with old images.
+func TestOldImagesGoWithTheirLastVM(t *testing.T) {
+	c := newCLI(t, "alice")
+	c.box.hv.BaseSnapshot = "boxe/images/boxeuntu-20261029@base"
+	c.host.images = []string{
+		"boxe/images/boxeuntu-20261029@base",
+		"boxe/images/boxeuntu-20261030@base",
+		"boxe/images/laravel-20261030@base",
+	}
+	c.must("alice", "new a1 --image laravel")
+	c.must("alice", "cp a1 a2")
+	c.host.images = append(c.host.images, "boxe/images/laravel-20261031@base") // an admin builds a new version
+
+	c.box.pruneImages()
+	if c.host.ran("zfs destroy boxe/images/") {
+		t.Fatalf("an image was deleted while VMs use it or new ones can pick it: %v", c.host.cmds)
+	}
+
+	c.must("alice", "rm a1")
+	c.box.pruneImages()
+	if c.host.ran("zfs destroy boxe/images/laravel-20261030") {
+		t.Fatal("deleted the image of a2, a copy of a1")
+	}
+
+	c.must("alice", "rm a2")
+	c.box.pruneImages()
+	if !c.host.ran("zfs destroy boxe/images/laravel-20261030@base") || !c.host.ran("zfs destroy boxe/images/laravel-20261030") {
+		t.Errorf("the old laravel image was kept: %v", c.host.cmds)
+	}
+	for _, kept := range []string{"boxeuntu-20261029", "boxeuntu-20261030", "laravel-20261031"} {
+		if c.host.ran("zfs destroy boxe/images/" + kept) {
+			t.Errorf("deleted %s, the default or the newest of its name", kept)
+		}
+	}
+	out := c.must("alice", "images")
+	if strings.Contains(out, "laravel-20261030") {
+		t.Errorf("images still lists the deleted version:\n%s", out)
+	}
+}

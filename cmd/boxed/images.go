@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"path"
 	"regexp"
 	"sort"
@@ -13,7 +14,7 @@ import (
 // Images are built by admins on the host (scripts/build-base.sh), next to
 // the default one: <images>/<name>-<date>[-n]@base, e.g.
 // boxe/images/laravel-20261030. Names are never reused, so a new version
-// gets a new date or number.
+// gets a new date or number. Older versions go once no VM uses them.
 
 // image is what `ssh boxe images` shows: the newest version of a name.
 type image struct {
@@ -113,4 +114,51 @@ func (h *Hypervisor) Image(name string) (string, error) {
 
 func (h *Hypervisor) snapshot(version string) string {
 	return h.imageParent() + "/" + version + "@base"
+}
+
+// pruneImages deletes the image versions nobody can pick any more (not the
+// default, not the newest of their name) once no VM uses them.
+func (b *Box) pruneImages() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	h := b.hv
+	versions, err := h.imageVersions()
+	if err != nil {
+		log.Printf("images: %v", err)
+		return
+	}
+	vms, err := b.store.List("")
+	if err != nil {
+		log.Printf("images: %v", err)
+		return
+	}
+	used := map[string]bool{h.BaseSnapshot: true}
+	for _, v := range vms {
+		used[v.Image] = true // copies too: their disk may come from the image through their source's
+	}
+	for i, v := range versions {
+		name, _, _ := imageOf(v)
+		snap := h.snapshot(v)
+		if used[snap] || i+1 == len(versions) {
+			continue
+		}
+		if next, _, _ := imageOf(versions[i+1]); next != name {
+			continue // the newest of its name
+		}
+		out, err := h.exec(30*time.Second, "zfs", "list", "-H", "-o", "clones", snap)
+		if err != nil || strings.TrimSpace(string(out)) != "-" {
+			continue // a disk still comes from it, or we cannot tell
+		}
+		// Without -r: anything else under the image (a snapshot an admin
+		// took) makes this fail, and the image stays.
+		if err := h.run("zfs", "destroy", snap); err != nil {
+			log.Printf("images: %s: %v", v, err)
+			continue
+		}
+		if err := h.run("zfs", "destroy", strings.TrimSuffix(snap, "@base")); err != nil {
+			log.Printf("images: %s: %v", v, err)
+			continue
+		}
+		log.Printf("images: removed %s, no VM uses it and a newer %s exists", v, name)
+	}
 }
