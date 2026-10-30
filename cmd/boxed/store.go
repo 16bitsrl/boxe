@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -72,7 +73,17 @@ CREATE TABLE IF NOT EXISTS samples (
 	mem  INTEGER NOT NULL, -- bytes
 	disk INTEGER NOT NULL  -- bytes
 );
-CREATE INDEX IF NOT EXISTS samples_vm_at ON samples (vm, at);`)
+CREATE INDEX IF NOT EXISTS samples_vm_at ON samples (vm, at);
+CREATE TABLE IF NOT EXISTS tokens (
+	id         TEXT PRIMARY KEY,
+	user       TEXT NOT NULL,
+	hash       TEXT NOT NULL UNIQUE, -- SHA-256 of the token, hex: the token itself is never kept
+	label      TEXT NOT NULL,
+	cmds       TEXT NOT NULL,        -- comma-separated commands it may run; empty: all
+	created_at TEXT NOT NULL,
+	expires_at TEXT NOT NULL,
+	used_at    TEXT NOT NULL         -- empty: never
+);`)
 	if err != nil {
 		return nil, err
 	}
@@ -267,6 +278,78 @@ func (s *Store) LogoutAt(email string) (int64, error) {
 		return 0, nil
 	}
 	return at, err
+}
+
+// Token is an API token of a member, without the token itself.
+type Token struct {
+	ID, User, Label        string
+	Cmds                   []string // the commands it may run; none: all
+	Created, Expires, Used time.Time
+}
+
+const tokenCols = "id, user, label, cmds, created_at, expires_at, used_at"
+
+func scanToken(row interface{ Scan(...any) error }) (Token, error) {
+	var t Token
+	var cmds, created, expires, used string
+	err := row.Scan(&t.ID, &t.User, &t.Label, &cmds, &created, &expires, &used)
+	if errors.Is(err, sql.ErrNoRows) {
+		return t, errNotFound
+	}
+	if cmds != "" {
+		t.Cmds = strings.Split(cmds, ",")
+	}
+	t.Created, _ = time.Parse(time.RFC3339, created)
+	t.Expires, _ = time.Parse(time.RFC3339, expires)
+	t.Used, _ = time.Parse(time.RFC3339, used)
+	return t, err
+}
+
+// AddToken records t, which hash (of the token) stands for.
+func (s *Store) AddToken(t Token, hash string) error {
+	_, err := s.db.Exec("INSERT INTO tokens ("+tokenCols+", hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		t.ID, t.User, t.Label, strings.Join(t.Cmds, ","), timeCol(t.Created), timeCol(t.Expires), timeCol(t.Used), hash)
+	return err
+}
+
+// Tokens are user's, oldest first.
+func (s *Store) Tokens(user string) ([]Token, error) {
+	rows, err := s.db.Query("SELECT "+tokenCols+" FROM tokens WHERE user = ? ORDER BY created_at, id", user)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []Token{}
+	for rows.Next() {
+		t, err := scanToken(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, t)
+	}
+	return list, rows.Err()
+}
+
+// TokenOf is the token whose hash is hash.
+func (s *Store) TokenOf(hash string) (Token, error) {
+	return scanToken(s.db.QueryRow("SELECT "+tokenCols+" FROM tokens WHERE hash = ?", hash))
+}
+
+// UsedToken records that the token id was used at t.
+func (s *Store) UsedToken(id string, t time.Time) error {
+	_, err := s.db.Exec("UPDATE tokens SET used_at = ? WHERE id = ?", timeCol(t), id)
+	return err
+}
+
+// DeleteToken deletes user's token with the id or the label idOrLabel.
+func (s *Store) DeleteToken(user, idOrLabel string) (Token, error) {
+	t, err := scanToken(s.db.QueryRow("SELECT "+tokenCols+" FROM tokens WHERE user = ? AND (id = ? OR label = ?) ORDER BY id = ? DESC",
+		user, idOrLabel, idOrLabel, idOrLabel))
+	if err != nil {
+		return t, err
+	}
+	_, err = s.db.Exec("DELETE FROM tokens WHERE id = ?", t.ID)
+	return t, err
 }
 
 // Dump writes a consistent copy of the database to path (for backups).

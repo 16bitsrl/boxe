@@ -12,13 +12,13 @@
   {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
   <div class="field">
     <label for="name">Name</label>
-    <input id="name" name="name" value="{{.Form.Name}}" placeholder="random" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32">
+    <input id="name" name="name" data-arg="" value="{{.Form.Name}}" placeholder="random" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32">
     <p class="hint">Lowercase letters, digits and dashes. Leave it empty for a random name.</p>
   </div>
   {{if .Images}}
   <div class="field">
     <label for="image">Image</label>
-    <select id="image" name="image">
+    <select id="image" name="image" data-arg="--image" data-default="{{.Default.Image}}">
       {{range .Images}}<option value="{{.Name}}"{{if or (eq .Name $.Form.Image) (and (not $.Form.Image) .Default)}} selected{{end}}>{{.Name}}</option>{{end}}
     </select>
   </div>
@@ -26,19 +26,23 @@
   <div class="field-row">
     <div class="field">
       <label for="cpu">CPU</label>
-      <select id="cpu" name="cpu">
+      <select id="cpu" name="cpu" data-arg="--cpu" data-default="{{.Default.CPU}}">
         {{range $n := list "1" "2" "4" "8"}}<option value="{{$n}}"{{if eq $n $.Form.CPU}} selected{{end}}>{{$n}} vCPU</option>{{end}}
       </select>
     </div>
     <div class="field">
       <label for="mem">RAM</label>
-      <select id="mem" name="mem">
+      <select id="mem" name="mem" data-arg="--mem" data-default="{{.Default.Mem}}">
         {{range $m := list "1G" "2G" "4G" "8G"}}<option value="{{$m}}"{{if eq $m $.Form.Mem}} selected{{end}}>{{$m}}</option>{{end}}
       </select>
     </div>
   </div>
+  <div class="said">
+    <span>The same as</span>
+    <div class="cmd" data-cmd="ssh {{.SSH}} new"><code><b>$</b> ssh {{.SSH}} {{.Cmds.new}}</code><button class="copy" data-copy="ssh {{.SSH}} {{.Cmds.new}}" hidden title="Copy the command">Copy</button></div>
+  </div>
   <button class="primary">Create VM</button>
 </form>
-<p class="hint">The same as <code>ssh {{.SSH}} new</code>. The VM lets in the SSH keys of your GitHub account.</p>
+<p class="hint">The VM lets in the SSH keys of your GitHub account.</p>
 {{end}}
 {{end}}

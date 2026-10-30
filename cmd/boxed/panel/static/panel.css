@@ -58,6 +58,11 @@ h2 { font-size: 22px; font-weight: 800; margin: 36px 0 10px; }
 .cmd b { color: var(--yellow); font-weight: 400; }
 .cmd .copy { align-self: stretch; border: 0; border-left: 1px solid #4a4240; background: transparent; color: var(--paper); }
 .cmd .copy:hover { background: #3a3331; }
+.said { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); font-size: 13px; }
+.said .cmd { margin: 0; }
+.said .cmd code { font-size: 13px; padding: 5px 10px; }
+.said .copy { padding: 5px 10px; font-size: 12px; }
+.manage .said { flex-basis: 100%; }
 
 button, .button {
   display: inline-block; font: 600 13px/1 -apple-system, system-ui, sans-serif; color: var(--ink);

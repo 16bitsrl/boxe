@@ -27,18 +27,19 @@ type fakeHost struct {
 	paused    map[string]bool  // unit -> hypervisor restored, VM not resumed yet
 	cpu       map[string]int64 // unit -> CPU time used, in ns
 	devDir    string
-	agent     []string          // commands boxe-agent got, as "<vm> <command>"
-	noAgent   bool              // VMs from an image without boxe-agent
-	agentErr  map[string]string // command -> error boxe-agent answers
-	hangUp    map[string]int    // "vm command" -> times boxe-agent hangs up without answering
-	noShelley bool              // Shelley in the VM does not answer
-	noModels  bool              // nobody added a model to Shelley yet
-	origin    map[string]string // clone -> snapshot it was made from
-	images    []string          // snapshots under the images dataset
-	mem       map[string]int64  // unit -> RAM it takes, in bytes
-	disk      string            // zfs list of the VM disks: name, referenced
-	onSSH     func()            // runs once, when something next waits for a VM's sshd
-	journal   map[string]string // unit -> what its process printed, as journalctl shows it
+	agent     []string                         // commands boxe-agent got, as "<vm> <command>"
+	noAgent   bool                             // VMs from an image without boxe-agent
+	agentErr  map[string]string                // command -> error boxe-agent answers
+	hangUp    map[string]int                   // "vm command" -> times boxe-agent hangs up without answering
+	noShelley bool                             // Shelley in the VM does not answer
+	noModels  bool                             // nobody added a model to Shelley yet
+	origin    map[string]string                // clone -> snapshot it was made from
+	images    []string                         // snapshots under the images dataset
+	mem       map[string]int64                 // unit -> RAM it takes, in bytes
+	disk      string                           // zfs list of the VM disks: name, referenced
+	onSSH     func()                           // runs once, when something next waits for a VM's sshd
+	journal   map[string]string                // unit -> what its process printed, as journalctl shows it
+	inVM      func(cmd string) ([]byte, error) // runs the other commands sent to a VM over SSH
 }
 
 // dial connects to a VM: every sshd answers at once, and boxe-agent behind
@@ -189,6 +190,8 @@ func (f *fakeHost) exec(_ time.Duration, name string, args ...string) ([]byte, e
 			return []byte("no models\n"), errors.New("exit status 3")
 		}
 		return []byte(`{"conversation_id":"cid1","slug":"fix-the-bug"}` + "\n"), nil
+	case name == "ssh" && f.inVM != nil:
+		return f.inVM(args[len(args)-1])
 	case name == "ch-remote":
 		// ch-remote --api-socket <sock> <command> [url]
 		u := unit(filepath.Base(filepath.Dir(args[1])))

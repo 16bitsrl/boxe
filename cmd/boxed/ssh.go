@@ -152,17 +152,20 @@ func (b *Box) help(cmd string) string {
 
   SSH new [name]                        create a VM (options: --cpu 2 --mem 2G --ttl 2h --image <name>)
   SSH ls [-a]                           your VMs (-a: everyone's)
-  SSH rm <name>                         delete a VM
+  SSH rm <name>                         delete a VM (an admin: anyone's)
   SSH cp <name> [new-name]              copy a VM, even a running one (as after a power cut)
   SSH fork <name> [new-name]            copy a running VM with its memory: programs keep running
   SSH ttl <name> <2h|3d|off>            delete a VM by itself after a while
-  SSH restart <name>                    power a VM off and on again
+  SSH restart <name>                    power a VM off and on again (an admin: anyone's)
   SSH sleep <name>                      put a VM to sleep now (it wakes up when you connect)
   SSH wake <name>                       wake a VM up
   SSH keep-awake <name> on|off          never put this VM to sleep when unused
   SSH share <name> [port]               a link that shows the VM (port 8000) to anyone who has it
   SSH unshare <name>                    make the VM's links stop working
+  SSH exec <name> <command>             run a command in a VM, as ssh <name>.SUFFIX <command> does
   SSH images                            the images new VMs can start from
+  SSH token new [--label x] [--exp 30d] [--cmds ls,new]
+                                        a token for the HTTPS API (token ls, token rm <id|label>)
   SSH ssh-config                        config for ~/.ssh/config
   SSH known-hosts                       line for ~/.ssh/known_hosts
   SSH whoami
@@ -186,6 +189,12 @@ func (b *Box) session(s ssh.Session) {
 		return
 	}
 	if err := b.run(s, user, s.RawCommand(), "ssh "+b.name+" "); err != nil {
+		// A command run in a VM exits as it did there, as with ssh <vm>.
+		var status exitStatus
+		if errors.As(err, &status) {
+			s.Exit(int(status))
+			return
+		}
 		fmt.Fprintln(s.Stderr(), "error:", err)
 		s.Exit(1)
 		return
@@ -196,10 +205,14 @@ func (b *Box) session(s ssh.Session) {
 // run is one command line, as typed after `ssh boxe` or at the prompt;
 // cmd is how the help writes a command there.
 func (b *Box) run(w io.Writer, user, line, cmd string) error {
-	raw, agent, hasAgent := cutAgent(line)
-	words, _ := shlex.Split(raw, true)
-	args, asJSON := cutFlag(words, "--json")
-	o := output{w: w, json: asJSON}
+	l := parseLine(line)
+	// exec passes the rest of the line to the VM as typed: --json and
+	// --agent included.
+	if l.command == "exec" {
+		return b.cmdExec(w, user, line)
+	}
+	args, agent, hasAgent := l.args, l.agent, l.hasAgent
+	o := output{w: w, json: l.json}
 	if len(args) == 0 {
 		io.WriteString(w, b.help(cmd))
 		return nil
@@ -238,6 +251,8 @@ func (b *Box) run(w io.Writer, user, line, cmd string) error {
 		err = b.cmdUnshare(o, user, args[1:])
 	case args[0] == "images":
 		err = b.cmdImages(o)
+	case args[0] == "token":
+		err = b.cmdToken(o, user, args[1:])
 	case args[0] == "ssh-config":
 		fmt.Fprintf(w, "Host *.%s\n  User exedev\n  ProxyJump %s\n", b.hv.SSHSuffix, b.name)
 	case args[0] == "known-hosts":
@@ -250,11 +265,38 @@ func (b *Box) run(w io.Writer, user, line, cmd string) error {
 	default:
 		err = fmt.Errorf("unknown command: %s (ssh %s help)", args[0], b.name)
 	}
-	if err != nil && asJSON {
+	if err != nil && l.json {
 		o.print(map[string]string{"error": err.Error()}, "")
 	}
 	return err
 }
+
+// line is a command line, split as run reads it.
+type line struct {
+	command        string   // what runs it: args[0], or "help"
+	args           []string // the words, without --json and --agent
+	json, hasAgent bool
+	agent          string
+}
+
+// parseLine splits a command line as run does. The API checks command
+// before running the line: both must read it the same way.
+func parseLine(s string) line {
+	raw, agent, hasAgent := cutAgent(s)
+	words, _ := shlex.Split(raw, true)
+	args, asJSON := cutFlag(words, "--json")
+	l := line{command: "help", args: args, json: asJSON, hasAgent: hasAgent, agent: agent}
+	if len(args) > 0 {
+		l.command = args[0]
+	}
+	return l
+}
+
+// hostError is a command that failed on the host's side, not because of
+// what was asked: the API answers it with a 500.
+type hostError struct{ error }
+
+func hostErrorf(format string, a ...any) error { return hostError{fmt.Errorf(format, a...)} }
 
 // output prints a command's result for people, or as JSON with --json.
 type output struct {
@@ -434,7 +476,7 @@ func (b *Box) cmdImages(o output) error {
 	images, err := b.hv.Images()
 	if err != nil {
 		log.Printf("images: %v", err)
-		return fmt.Errorf("could not list the images")
+		return hostErrorf("could not list the images")
 	}
 	if o.json {
 		o.print(images, "")
@@ -533,19 +575,20 @@ const maxTTL = 30 * 24 * time.Hour
 
 // parseTTL reads durations like 30m, 2h or 3d.
 func parseTTL(s string) (time.Duration, error) {
-	var d time.Duration
-	var err error
-	if n, ok := strings.CutSuffix(s, "d"); ok {
-		var days int
-		days, err = strconv.Atoi(n)
-		d = time.Duration(days) * 24 * time.Hour
-	} else {
-		d, err = time.ParseDuration(s)
-	}
+	d, err := parseDays(s)
 	if err != nil || d < time.Minute || d > maxTTL {
 		return 0, fmt.Errorf("invalid ttl %q: a duration like 30m, 2h or 3d, at most 30d", s)
 	}
 	return d, nil
+}
+
+// parseDays reads a duration, also in days: 30m, 2h, 3d.
+func parseDays(s string) (time.Duration, error) {
+	if n, ok := strings.CutSuffix(s, "d"); ok {
+		days, err := strconv.Atoi(n)
+		return time.Duration(days) * 24 * time.Hour, err
+	}
+	return time.ParseDuration(s)
 }
 
 // cmdCp copies a VM: its disk, or with fork its memory too.
@@ -617,7 +660,7 @@ func (b *Box) create(o output, user, name string, cpus int, mem string, srcName,
 		if free, err := b.hv.FreeSpace(); err != nil || free < b.hv.MinFree {
 			b.mu.Unlock()
 			log.Printf("%s: create %s: free space %d: %v", user, name, free, err)
-			return fmt.Errorf("the host is short of disk space: ask an admin")
+			return hostErrorf("the host is short of disk space: ask an admin")
 		}
 	}
 	v := VM{Name: name, Owner: user, CPUs: cpus, Mem: mem, Image: image}
@@ -640,17 +683,17 @@ func (b *Box) create(o output, user, name string, cpus int, mem string, srcName,
 		log.Printf("%s: create %s: %v", user, name, err)
 		if errors.Is(err, errLeftBehind) {
 			b.mu.Unlock()
-			return fmt.Errorf("could not create the VM, nor clean up after it: delete it with ssh %s rm %s", b.name, name)
+			return hostErrorf("could not create the VM, nor clean up after it: delete it with ssh %s rm %s", b.name, name)
 		}
 		b.store.Delete(name)
 		b.mu.Unlock()
 		if strings.Contains(err.Error(), "could not flush") {
-			return fmt.Errorf("could not copy: %s did not flush its disk; try again", srcName)
+			return hostErrorf("could not copy: %s did not flush its disk; try again", srcName)
 		}
 		if errors.Is(err, errNoAgent) {
 			return fmt.Errorf("%s comes from an older image and cannot be forked: copy it with cp", srcName)
 		}
-		return fmt.Errorf("could not create the VM")
+		return hostErrorf("could not create the VM")
 	}
 	b.mu.Unlock()
 	if err := b.hv.WaitSSH(v, 30*time.Second); err != nil {
@@ -699,15 +742,23 @@ func (b *Box) cmdRestart(o output, user string, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: ssh %s restart <name>", b.name)
 	}
-	v, err := b.restart(user, false, args[0])
+	v, err := b.restart(user, b.keys.Admin(user), args[0])
 	if err != nil {
 		return err
 	}
 	if err := b.hv.WaitSSH(v, 30*time.Second); err != nil {
 		return err
 	}
-	o.print(done{v.Name, "restarted"}, v.Name+" restarted\n")
+	o.print(ownedDone{v.Name, "restarted", v.Owner}, v.Name+" restarted"+whose(user, v, "is")+"\n")
 	return nil
+}
+
+// whose tells an admin that the VM they changed is (or was) someone else's.
+func whose(user string, v VM, verb string) string {
+	if v.Owner == user {
+		return ""
+	}
+	return " (it " + verb + " " + v.Owner + "'s)"
 }
 
 // manageable is the VM name if user may restart or delete it: theirs, or
@@ -740,9 +791,9 @@ func (b *Box) restart(user string, admin bool, name string) (VM, error) {
 	}
 	if err != nil {
 		log.Printf("%s: restart %s: %v", user, v.Name, err)
-		return v, fmt.Errorf("could not restart %s", v.Name)
+		return v, hostErrorf("could not restart %s", v.Name)
 	}
-	log.Printf("%s: restarted %s", user, v.Name)
+	log.Printf("%s: restarted %s%s", user, v.Name, whose(user, v, "is"))
 	return v, nil
 }
 
@@ -827,11 +878,11 @@ func (b *Box) cmdRm(o output, user string, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: ssh %s rm <name>", b.name)
 	}
-	v, err := b.remove(user, false, args[0])
+	v, err := b.remove(user, b.keys.Admin(user), args[0])
 	if err != nil {
 		return err
 	}
-	o.print(done{v.Name, "deleted"}, v.Name+" deleted\n")
+	o.print(ownedDone{v.Name, "deleted", v.Owner}, v.Name+" deleted"+whose(user, v, "was")+"\n")
 	return nil
 }
 
@@ -845,9 +896,9 @@ func (b *Box) remove(user string, admin bool, name string) (VM, error) {
 	}
 	if err := b.hv.Destroy(v); err != nil {
 		log.Printf("%s: rm %s: %v", user, v.Name, err)
-		return v, fmt.Errorf("could not delete the VM")
+		return v, hostErrorf("could not delete the VM")
 	}
-	log.Printf("%s: removed %s", user, v.Name)
+	log.Printf("%s: removed %s%s", user, v.Name, whose(user, v, "was"))
 	return v, b.store.Delete(v.Name)
 }
 
@@ -855,6 +906,14 @@ func (b *Box) remove(user string, admin bool, name string) (VM, error) {
 type done struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
+}
+
+// ownedDone is done with the VM's owner: an admin's rm and restart may be
+// of someone else's.
+type ownedDone struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Owner  string `json:"owner"`
 }
 
 func (b *Box) cmdLs(o output, user string, args []string) error {

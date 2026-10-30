@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +74,20 @@ func (k *Keys) Member(email string) (user string, admin bool) {
 		}
 	}
 	return "", false
+}
+
+// InTeam says whether user is in the users file.
+func (k *Keys) InTeam(user string) bool {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return slices.Contains(k.users, user)
+}
+
+// Admin says whether user is marked admin in the users file.
+func (k *Keys) Admin(user string) bool {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return k.admins[user]
 }
 
 // teamMember is a line of the users file, with how many keys the member has.

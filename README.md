@@ -105,7 +105,8 @@ before you trust it with anything.
   boxe lets in, how to set up SSH, and logging out everywhere. Members make
   new VMs there and copy theirs. The owner of a VM, and an admin, can read
   its console, restart it or delete it (typing its name); everything else is
-  done over SSH. Admins also get a page about the host: what `/healthz`
+  done over SSH. Every action shows the `ssh boxe` command that does the
+  same, and the panel runs exactly that command. Admins also get a page about the host: what `/healthz`
   would complain about, CPU, RAM and disk, the team with their keys and VMs,
   and the last backup run.
 
@@ -114,17 +115,22 @@ before you trust it with anything.
 ```
 ssh boxe new [name]                        create a VM (--cpu 2 --mem 2G --ttl 2h --image <name>)
 ssh boxe ls [-a]                           your VMs and what they use (-a: everyone's)
-ssh boxe rm <name>                         delete a VM
+ssh boxe rm <name>                         delete a VM (an admin: anyone's)
 ssh boxe cp <name> [new-name]              copy a VM, even a running one
 ssh boxe fork <name> [new-name]            copy a running VM with its memory
 ssh boxe ttl <name> <2h|3d|off>            delete a VM by itself after a while
-ssh boxe restart <name>                    power a VM off and on again
+ssh boxe restart <name>                    power a VM off and on again (an admin: anyone's)
 ssh boxe sleep <name>                      put a VM to sleep now
 ssh boxe wake <name>                       wake a VM up (connecting does too)
 ssh boxe keep-awake <name> on|off          never put this VM to sleep
 ssh boxe share <name> [port]               a link to the VM for anyone (port 8000)
 ssh boxe unshare <name>                    make the VM's links stop working
+ssh boxe exec <name> <command>             run a command in a VM and print what it printed
 ssh boxe images                            images to start a VM from
+ssh boxe token new [--label x] [--exp 30d] [--cmds ls,new]
+                                           a token for the HTTPS API, shown once
+ssh boxe token ls                          your tokens (never the tokens themselves)
+ssh boxe token rm <id|label>               delete a token
 ssh boxe whoami                            your GitHub username, as boxe knows you
 ssh boxe ssh-config                        config for ~/.ssh/config
 ssh boxe known-hosts                       line for ~/.ssh/known_hosts
@@ -143,6 +149,11 @@ to its RAM) and the space its disk takes in the pool.
 everything after `--agent` is the prompt, as typed. Quote the whole command
 when the prompt has characters your shell would read, like an apostrophe.
 
+`ssh boxe exec <name> <command>` is `ssh <name>.boxe <command>` for programs
+and the API: the command runs as `exedev`, the VM wakes up first if it
+sleeps, it may run for 5 minutes, and boxe exits with its exit status. The
+rest of the line goes to the VM's shell as typed, `--json` included.
+
 `ssh boxe` alone, from a terminal, opens a prompt: type the commands
 without `ssh boxe`, with history and tab completion of commands and of your
 VM names. `exit` or ctrl-d leaves it. From a script, `ssh boxe` prints the
@@ -150,6 +161,32 @@ help instead.
 
 Once per computer: `ssh boxe ssh-config >> ~/.ssh/config` and
 `ssh boxe known-hosts >> ~/.ssh/known_hosts`.
+
+## HTTPS API
+
+Every command also works over HTTPS: POST the command line, as typed after
+`ssh boxe`, to `https://<domain>/exec` with a token.
+
+```
+$ ssh boxe token new --label ci --exp 90d --cmds ls,new,exec
+$ curl -X POST https://boxe.example.com/exec -H "Authorization: Bearer boxe_..." -d 'new --json'
+$ curl -X POST https://boxe.example.com/exec -H "Authorization: Bearer boxe_..." -d 'exec quick-fox uptime'
+```
+
+- The command runs as the token's member, as over SSH, and the answer is
+  what it printed (`text/plain`). Add `--json` for JSON.
+- Status: 200 when it worked; 400 when boxe refused it (a mistake, a VM
+  that is not yours) and 500 when it failed on the host, with the error as
+  the body; 401 without a valid token, 403 when the token may not run that
+  command or its member left the team. `exec` answers 422 when the command
+  in the VM failed, and `X-Exit-Status` has its exit status.
+- Tokens last 30 days unless `--exp` says otherwise (at most 365 days).
+  `--cmds` limits what they may run. They never make, list or delete
+  tokens: that is done over SSH only. boxe keeps only a hash of each token,
+  so a lost token cannot be shown again: make another.
+- Removing someone from `/etc/boxe/users` stops their tokens at once.
+- The API takes no cookies, only the token: pages of VMs cannot use it
+  with a member's browser.
 
 ## Security model
 

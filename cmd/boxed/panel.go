@@ -7,21 +7,26 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // The panel on https://<domain>: each member's VMs, all of them for an
 // admin, which they can restart and delete; members make new VMs and copy
-// theirs. Pages are server-rendered;
-// panel.js only adds the copy buttons. VM pages are on the same site and
+// theirs. Every action shows the command that does it over SSH, and runs
+// exactly that command: the panel can do nothing ssh boxe cannot.
+// Pages are server-rendered; panel.js only adds the copy buttons and keeps
+// the commands of forms up to date. VM pages are on the same site and
 // untrusted, hence the headers in panelHeaders, no state change on a GET, and
 // the origin check and the session's token on every form (act).
 
@@ -77,9 +82,10 @@ func (b *Box) panel(w *Web) {
 		return list, err
 	}
 	w.keysOf = b.keys.AuthorizedKeys
-	w.restart = func(user string, admin bool, name string) error {
-		_, err := b.restart(user, admin, name)
-		return err
+	w.run = func(user, line string) ([]byte, error) {
+		var out bytes.Buffer
+		err := b.run(&out, user, line, "")
+		return out.Bytes(), err
 	}
 	w.host = b.hostInfo
 	w.samples = b.store.Samples
@@ -90,37 +96,6 @@ func (b *Box) panel(w *Web) {
 			return "", err
 		}
 		return b.hv.Console(v, consoleLines)
-	}
-	w.create = func(user string, n newVM, from string) (vmJSON, error) {
-		var out bytes.Buffer
-		o := output{w: &out, json: true}
-		var err error
-		if from != "" {
-			err = b.create(o, user, n.Name, 0, "", from, "", 0, false, "")
-		} else {
-			args := []string{"--cpu", n.CPU, "--mem", n.Mem}
-			if n.Name != "" {
-				args = append(args, n.Name)
-			}
-			name, cpus, mem, perr := parseVMFlags(args)
-			if perr != nil {
-				return vmJSON{}, perr
-			}
-			snapshot := b.hv.BaseSnapshot
-			if n.Image != "" {
-				if snapshot, err = b.hv.Image(n.Image); err != nil {
-					return vmJSON{}, err
-				}
-			}
-			err = b.create(o, user, name, cpus, mem, "", snapshot, 0, false, "")
-		}
-		var j vmJSON
-		json.Unmarshal(out.Bytes(), &j)
-		return j, err
-	}
-	w.remove = func(user string, admin bool, name string) error {
-		_, err := b.remove(user, admin, name)
-		return err
 	}
 	w.sshName = b.name
 }
@@ -136,16 +111,18 @@ type panelPage struct {
 	Domain  string
 	VMs     []vmJSON
 	VM      vmJSON
-	Links   []panelLink // of VM
-	Manage  bool        // they may restart and delete VM
-	CSRF    string      // the token of the session, for forms
-	Error   string      // what went wrong with the last form
-	Host    hostInfo    // for an admin
-	Usage   usage       // of VM
-	Owns    bool        // VM is theirs
-	Form    newVM       // as typed in the form of a new VM
-	Images  []image     // to make it from
-	Console string      // what VM printed lately
+	Links   []panelLink       // of VM
+	Manage  bool              // they may restart and delete VM
+	CSRF    string            // the token of the session, for forms
+	Error   string            // what went wrong with the last form
+	Host    hostInfo          // for an admin
+	Usage   usage             // of VM
+	Owns    bool              // VM is theirs
+	Form    newVM             // as typed in the form of a new VM
+	Default newVM             // what a new VM is without options
+	Images  []image           // to make it from
+	Cmds    map[string]string // the command of each action, after ssh boxe
+	Console string            // what VM printed lately
 	Keys    []string
 	Message string
 	Logout  bool      // the message offers to log out
@@ -156,6 +133,57 @@ type panelLink struct{ Label, URL string }
 
 // newVM is the form of a new VM; a copy has only the name.
 type newVM struct{ Name, Image, CPU, Mem string }
+
+// defaultVM is a new VM without options, as parseVMFlags makes it.
+var defaultVM = newVM{CPU: "2", Mem: "2G"}
+
+// newCommand is the command that makes n; defaultImage is the image new
+// VMs start from without --image. Options at their default are left out.
+func newCommand(n newVM, defaultImage string) []string {
+	words := []string{"new"}
+	if n.Name != "" {
+		words = append(words, n.Name)
+	}
+	for _, o := range []struct{ flag, value, def string }{
+		{"--image", n.Image, defaultImage}, {"--cpu", n.CPU, defaultVM.CPU}, {"--mem", n.Mem, defaultVM.Mem}} {
+		if o.value != "" && o.value != o.def {
+			words = append(words, o.flag, o.value)
+		}
+	}
+	return words
+}
+
+// copyCommand is the command that copies the VM src, to name if given.
+func copyCommand(src, name string) []string {
+	if name == "" {
+		return []string{"cp", src}
+	}
+	return []string{"cp", src, name}
+}
+
+var safeWord = regexp.MustCompile(`^[A-Za-z0-9._/:=@%+-]+$`)
+
+// cmdLine writes words as a command line, quoted as a shell wants them
+// (panel.js does the same).
+func cmdLine(words []string) string {
+	var q []string
+	for _, w := range words {
+		if !safeWord.MatchString(w) {
+			w = "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"
+		}
+		q = append(q, w)
+	}
+	return strings.Join(q, " ")
+}
+
+// oneWord refuses what would not stay one word of the command line, even
+// quoted: run reads --agent before it reads quotes.
+func oneWord(field, value string) error {
+	if strings.ContainsFunc(value, unicode.IsSpace) {
+		return fmt.Errorf("invalid %s %q", field, value)
+	}
+	return nil
+}
 
 // panelHeaders keep the browser from framing the panel, sending its forms
 // elsewhere, running anything but its own files, or guessing types.
@@ -221,7 +249,7 @@ func (w *Web) servePanel(rw http.ResponseWriter, r *http.Request) {
 	case path == "/":
 		w.vmList(rw, p)
 	case path == "/new":
-		w.newPage(rw, http.StatusOK, p, newVM{CPU: "2", Mem: "2G"})
+		w.newPage(rw, http.StatusOK, p, defaultVM)
 	case path == "/me":
 		p.Title, p.Nav = "Account", "me"
 		if p.User != "" {
@@ -332,6 +360,8 @@ func (w *Web) vmPage(rw http.ResponseWriter, status int, p panelPage, v vmJSON, 
 		p.Links = append(p.Links, panelLink{"Agent", host(v.Name + "--agent")}, panelLink{"Desktop", host(v.Name + "--desktop")})
 	}
 	p.Manage = v.Owner == p.User || p.Admin
+	p.Cmds = map[string]string{"cp": cmdLine(copyCommand(v.Name, p.Form.Name)),
+		"restart": cmdLine([]string{"restart", v.Name}), "rm": cmdLine([]string{"rm", v.Name})}
 	w.render(rw, status, "vm", p)
 }
 
@@ -356,14 +386,27 @@ func (w *Web) consolePage(rw http.ResponseWriter, p panelPage, name string) {
 
 // newPage is the form of a new VM, filled with n.
 func (w *Web) newPage(rw http.ResponseWriter, status int, p panelPage, n newVM) {
-	p.Title, p.Nav, p.Form = "New VM", "vms", n
+	p.Title, p.Nav, p.Form, p.Default = "New VM", "vms", n, defaultVM
 	if p.User != "" {
-		var err error
-		if p.Images, err = w.images(); err != nil {
-			log.Printf("web: panel: images: %v", err) // the form goes on with the default image
+		p.Images, p.Default.Image = w.imagesAndDefault()
+	}
+	p.Cmds = map[string]string{"new": cmdLine(newCommand(n, p.Default.Image))}
+	w.render(rw, status, "new", p)
+}
+
+// imagesAndDefault are the images new VMs can start from and the name of
+// the one they start from without --image.
+func (w *Web) imagesAndDefault() ([]image, string) {
+	images, err := w.images()
+	if err != nil {
+		log.Printf("web: panel: images: %v", err) // the form goes on with the default image
+	}
+	for _, im := range images {
+		if im.Default {
+			return images, im.Name
 		}
 	}
-	w.render(rw, status, "new", p)
+	return images, ""
 }
 
 // panelAction splits /vm/<name>/<action> and /new, the forms of the panel.
@@ -395,8 +438,10 @@ func (w *Web) act(rw http.ResponseWriter, r *http.Request, name, action string) 
 		return
 	}
 	if action == "new" {
-		w.createVM(rw, r, p, s.E, newVM{Name: strings.TrimSpace(r.PostFormValue("name")), Image: r.PostFormValue("image"),
-			CPU: r.PostFormValue("cpu"), Mem: r.PostFormValue("mem")}, nil)
+		n := newVM{Name: strings.TrimSpace(r.PostFormValue("name")), Image: r.PostFormValue("image"),
+			CPU: r.PostFormValue("cpu"), Mem: r.PostFormValue("mem")}
+		_, def := w.imagesAndDefault()
+		w.createVM(rw, r, p, s.E, n, nil, newCommand(n, def))
 		return
 	}
 	// Whoever sees a VM may manage it; restart and remove check it again,
@@ -406,7 +451,8 @@ func (w *Web) act(rw http.ResponseWriter, r *http.Request, name, action string) 
 		return
 	}
 	if action == "copy" {
-		w.createVM(rw, r, p, s.E, newVM{Name: strings.TrimSpace(r.PostFormValue("name"))}, &v)
+		n := newVM{Name: strings.TrimSpace(r.PostFormValue("name"))}
+		w.createVM(rw, r, p, s.E, n, &v, copyCommand(v.Name, n.Name))
 		return
 	}
 	if action == "delete" && r.PostFormValue("confirm") != v.Name {
@@ -414,8 +460,8 @@ func (w *Web) act(rw http.ResponseWriter, r *http.Request, name, action string) 
 		w.vmPage(rw, http.StatusBadRequest, p, v, "")
 		return
 	}
-	do := map[string]func(string, bool, string) error{"restart": w.restart, "delete": w.remove}[action]
-	if err := do(p.User, p.Admin, v.Name); err != nil {
+	cmd := map[string]string{"restart": "restart", "delete": "rm"}[action]
+	if _, err := w.run(p.User, cmdLine([]string{cmd, v.Name})+" --json"); err != nil {
 		p.Error = sentence(err)
 		w.vmPage(rw, http.StatusInternalServerError, p, v, "")
 		return
@@ -429,19 +475,25 @@ func (w *Web) act(rw http.ResponseWriter, r *http.Request, name, action string) 
 	http.Redirect(rw, r, "/vm/"+v.Name, http.StatusSeeOther)
 }
 
-// createVM makes n for p's member, or a copy of src, and goes to it;
-// mistakes go back to the form.
-func (w *Web) createVM(rw http.ResponseWriter, r *http.Request, p panelPage, email string, n newVM, src *vmJSON) {
+// createVM makes n for p's member, or a copy of src, with the command
+// words, and goes to it; mistakes go back to the form.
+func (w *Web) createVM(rw http.ResponseWriter, r *http.Request, p panelPage, email string, n newVM, src *vmJSON, words []string) {
 	if p.User == "" {
 		p.Title, p.Message = "Not allowed", "Ask an admin to add you to the team."
 		w.render(rw, http.StatusForbidden, "message", p)
 		return
 	}
-	from, did := "", "new"
+	did := "new"
 	if src != nil {
-		from, did = src.Name, "copy "+src.Name+" to"
+		did = "copy " + src.Name + " to"
 	}
-	j, err := w.create(p.User, n, from)
+	var j vmJSON
+	err := errors.Join(oneWord("name", n.Name), oneWord("image", n.Image), oneWord("CPU", n.CPU), oneWord("RAM", n.Mem))
+	if err == nil {
+		var out []byte
+		out, err = w.run(p.User, cmdLine(words)+" --json")
+		json.Unmarshal(out, &j)
+	}
 	if err != nil {
 		p.Error = sentence(err)
 		p.Form = n

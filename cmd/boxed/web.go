@@ -46,13 +46,14 @@ type Web struct {
 	vms      func(owner string) ([]vmJSON, error) // "": every VM
 	keysOf   func(user string) string             // authorized_keys lines
 	sshName  string                               // what members ssh to
-	// restart and remove a VM of user, any VM for an admin.
-	restart, remove func(user string, admin bool, name string) error
-	host            func() hostInfo // for admins
-	samples         func(vm string, since time.Time) ([]Sample, error)
-	create          func(user string, n newVM, from string) (vmJSON, error) // a new VM, or a copy of from
-	images          func() ([]image, error)
-	console         func(vm string) (string, error) // what it printed lately
+	// run is a command line as user, as typed after `ssh boxe`: the
+	// panel changes VMs only with the commands it shows.
+	run     func(user, line string) ([]byte, error)
+	host    func() hostInfo // for admins
+	samples func(vm string, since time.Time) ([]Sample, error)
+	images  func() ([]image, error)
+	console func(vm string) (string, error) // what it printed lately
+	api     http.Handler                    // POST /exec (api.go); nil: no API
 
 	mu  sync.Mutex
 	idp struct{ Auth, Token, Userinfo string } // from discovery, on first use
@@ -126,6 +127,12 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			w.login(rw, r)
 		case "/oauth/callback":
 			w.callback(rw, r)
+		case "/exec":
+			if w.api == nil {
+				http.NotFound(rw, r)
+				return
+			}
+			w.api.ServeHTTP(rw, r)
 		case "/healthz":
 			var p []string
 			if w.health != nil {

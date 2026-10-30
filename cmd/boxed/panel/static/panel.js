@@ -13,6 +13,29 @@ for (const b of document.querySelectorAll("button.copy")) {
   });
 }
 
+// The command of a form, as the fields change: the words of its fields
+// with data-arg (a flag, or "" for a word of its own), unless empty or at
+// their default, quoted as a shell wants them (as cmdLine in panel.go).
+const quote = (w) => (/^[A-Za-z0-9._\/:=@%+-]+$/.test(w) ? w : "'" + w.replaceAll("'", "'\\''") + "'");
+for (const cmd of document.querySelectorAll(".cmd[data-cmd]")) {
+  const form = cmd.closest("form");
+  const line = cmd.querySelector("code").lastChild;
+  const copy = cmd.querySelector(".copy");
+  const update = () => {
+    const words = [cmd.dataset.cmd];
+    for (const f of form.querySelectorAll("[data-arg]")) {
+      const v = f.value.trim();
+      if (v === "" || v === f.dataset.default) continue;
+      if (f.dataset.arg) words.push(f.dataset.arg);
+      words.push(quote(v));
+    }
+    line.textContent = " " + words.join(" ");
+    copy.dataset.copy = words.join(" ");
+  };
+  form.addEventListener("input", update);
+  form.addEventListener("change", update);
+}
+
 // Charts: a hairline and the value at the pointer, at the same time in
 // every chart of the group; arrow keys move it too.
 for (const group of document.querySelectorAll(".charts")) {

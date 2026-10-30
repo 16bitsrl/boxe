@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,7 @@ func newPanelTest(t *testing.T) *panelTest {
 	c.box.keys.mu.Lock()
 	c.box.keys.emails = map[string]string{"alice": "alice@example.com", "bob": "bob@example.com", "dave": "dave@example.com"}
 	c.box.keys.admins = map[string]bool{"dave": true}
+	c.box.keys.users = []string{"alice", "bob", "dave"}
 	c.box.keys.byUser = map[string]string{"alice": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice alice@laptop\n"}
 	c.box.keys.mu.Unlock()
 	wt := &webTest{t: t, idp: newFakeIdP(t)}
@@ -41,6 +43,7 @@ func newPanelTest(t *testing.T) *panelTest {
 		Secret:       []byte("0123456789abcdef0123456789abcdef"),
 	}, c.box.store)
 	c.box.panel(wt.web)
+	c.box.api(wt.web)
 	return &panelTest{webTest: wt, c: c}
 }
 
@@ -622,5 +625,134 @@ func TestPanelConsole(t *testing.T) {
 	}
 	if _, page := b.page("/vm/nap/console"); !strings.Contains(page, "Nothing yet") {
 		t.Errorf("empty console:\n%s", page)
+	}
+}
+
+var shownCommand = regexp.MustCompile(`data-copy="ssh boxe ([^"]*)"`)
+
+// shown are the commands a page of the panel shows, without "ssh boxe ".
+func shown(page string) []string {
+	var cmds []string
+	for _, m := range shownCommand.FindAllStringSubmatch(page, -1) {
+		cmds = append(cmds, m[1])
+	}
+	return cmds
+}
+
+// recordRuns makes the panel note the command lines it runs, as user: line.
+func (pt *panelTest) recordRuns() *[]string {
+	ran := &[]string{}
+	run := pt.web.run
+	pt.web.run = func(user, line string) ([]byte, error) {
+		*ran = append(*ran, user+": "+line)
+		return run(user, line)
+	}
+	return ran
+}
+
+// last is the last line in ran, "" if none.
+func last(ran *[]string) string {
+	if len(*ran) == 0 {
+		return ""
+	}
+	return (*ran)[len(*ran)-1]
+}
+
+// Every action of the panel shows the command that does the same over SSH,
+// and runs exactly that command (with --json): the panel can do nothing
+// the CLI cannot.
+func TestPanelShowsItsCommands(t *testing.T) {
+	pt := newPanelTest(t)
+	pt.c.box.hv.BaseSnapshot = "boxe/images/boxeuntu-20261029@base"
+	pt.c.host.images = []string{"boxe/images/boxeuntu-20261029@base", "boxe/images/laravel-20261031-2@base"}
+	ran := pt.recordRuns()
+	b := pt.browser("member")
+
+	_, page := b.page("/new")
+	if !slices.Contains(shown(page), "new") {
+		t.Errorf("new: shows %q", shown(page))
+	}
+	// The form tells the script how to write the command as it changes.
+	for _, want := range []string{`id="name" name="name" data-arg=""`, `data-arg="--image" data-default="boxeuntu"`,
+		`data-arg="--cpu" data-default="2"`, `data-arg="--mem" data-default="2G"`, `data-cmd="ssh boxe new"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("new: no %q in:\n%s", want, page)
+		}
+	}
+	token := csrf(t, page)
+	for _, c := range []struct {
+		form url.Values
+		cmd  string
+	}{
+		{url.Values{"name": {"web"}, "image": {"laravel"}, "cpu": {"4"}, "mem": {"4G"}}, "new web --image laravel --cpu 4 --mem 4G"},
+		{url.Values{"name": {""}, "image": {"boxeuntu"}, "cpu": {"2"}, "mem": {"2G"}}, "new"},
+		// Refused by boxe: the form comes back showing what was run.
+		{url.Values{"name": {"test"}, "image": {"boxeuntu"}, "cpu": {"1"}, "mem": {"2G"}}, "new test --cpu 1"},
+		{url.Values{"name": {"big"}, "cpu": {"64"}, "mem": {"2G"}}, "new big --cpu 64"},
+	} {
+		c.form.Set("csrf", token)
+		res := b.post("/new", c.form, fromPanel)
+		page := body(res)
+		if got := last(ran); got != "alice: "+c.cmd+" --json" {
+			t.Errorf("%v: ran %q, want %q", c.form, got, c.cmd)
+		}
+		if res.StatusCode == http.StatusBadRequest && !slices.Contains(shown(page), c.cmd) {
+			t.Errorf("%v: the form shows %q, not %q", c.form, shown(page), c.cmd)
+		}
+	}
+	// What cannot be a single word of a command is refused before running.
+	n := len(*ran)
+	for _, form := range []url.Values{
+		{"name": {"x --agent rm -rf ~"}, "cpu": {"2"}, "mem": {"2G"}},
+		{"name": {"x"}, "cpu": {"2 --mem 8G"}, "mem": {"2G"}},
+		{"name": {"x"}, "image": {"a b"}, "cpu": {"2"}, "mem": {"2G"}},
+	} {
+		form.Set("csrf", token)
+		if res := b.post("/new", form, fromPanel); res.StatusCode != http.StatusBadRequest || pt.exists("x") {
+			t.Errorf("%v: %d", form, res.StatusCode)
+		}
+	}
+	if len(*ran) != n {
+		t.Errorf("ran %q", (*ran)[n:])
+	}
+
+	_, page = b.page("/vm/test")
+	for _, want := range []string{"cp test", "restart test", "rm test"} {
+		if !slices.Contains(shown(page), want) {
+			t.Errorf("vm: no %q in %q", want, shown(page))
+		}
+	}
+	if !strings.Contains(page, `data-cmd="ssh boxe cp test"`) {
+		t.Errorf("the copy form does not update its command:\n%s", page)
+	}
+	for _, c := range []struct {
+		action string
+		form   url.Values
+		cmd    string
+	}{
+		{"copy", url.Values{"name": {"test2"}}, "cp test test2"},
+		{"copy", url.Values{"name": {""}}, "cp test"},
+		{"restart", nil, "restart test"},
+		{"delete", url.Values{"confirm": {"test"}}, "rm test"},
+	} {
+		if c.form == nil {
+			c.form = url.Values{}
+		}
+		c.form.Set("csrf", token)
+		b.post("/vm/test/"+c.action, c.form, fromPanel)
+		if got := last(ran); got != "alice: "+c.cmd+" --json" {
+			t.Errorf("%s: ran %q, want %q", c.action, got, c.cmd)
+		}
+	}
+
+	// The admin's commands on someone else's VM work in the CLI too.
+	admin := pt.browser("admin")
+	_, page = admin.page("/vm/bobs-vm")
+	if cmds := shown(page); !slices.Contains(cmds, "restart bobs-vm") || !slices.Contains(cmds, "rm bobs-vm") || slices.Contains(cmds, "cp bobs-vm") {
+		t.Errorf("admin: shows %q", cmds)
+	}
+	admin.post("/vm/bobs-vm/restart", url.Values{"csrf": {csrf(t, page)}}, fromPanel)
+	if got := last(ran); got != "dave: restart bobs-vm --json" {
+		t.Errorf("admin restart: ran %q", got)
 	}
 }

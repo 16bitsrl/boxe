@@ -173,6 +173,7 @@ func main() {
 		web.busy = b.busy
 		web.ownerEmail = keys.Email
 		b.panel(web)
+		b.api(web)
 		go func() { log.Fatal(http.ListenAndServe(*httpAddr, web)) }()
 	}
 

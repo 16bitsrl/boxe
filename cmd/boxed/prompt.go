@@ -10,7 +10,7 @@ import (
 
 // commands are what tab completes first at the prompt.
 var commands = []string{"new", "ls", "rm", "cp", "fork", "ttl", "restart", "sleep", "wake", "keep-awake",
-	"share", "unshare", "images", "ssh-config", "known-hosts", "whoami", "help", "exit"}
+	"share", "unshare", "exec", "images", "token", "ssh-config", "known-hosts", "whoami", "help", "exit"}
 
 // prompt is `ssh boxe` from a terminal: one command after another, with
 // history and tab completion, until exit or ctrl-d.
