@@ -44,7 +44,7 @@ func main() {
 		org         = flag.String("oidc-org", "", "Zitadel organization whose users may log in")
 		emailDoms   = flag.String("oidc-email-domains", "", "without -oidc-org: comma-separated domains of the verified emails that may log in")
 		sshSuffix   = flag.String("ssh-suffix", "boxe", "VMs are <vm>.<suffix> for SSH")
-		dns         = flag.String("dns", "1.1.1.1,1.0.0.1", "comma-separated DNS servers for the VMs")
+		dns         = flag.String("dns", "1.1.1.1,1.0.0.1", "comma-separated DNS servers that boxed forwards the VMs' queries to")
 		oidcFile    = flag.String("oidc", "/etc/boxe/oidc", "file with OIDC_CLIENT_ID= and OIDC_CLIENT_SECRET=")
 		showVersion = flag.Bool("version", false, "print the version and exit")
 		dumpDB      = flag.String("dump-db", "", "write a consistent copy of the database to this file (for backups), then exit")
@@ -134,7 +134,7 @@ func main() {
 			BaseSnapshot: *base, Dataset: *dataset, Kernel: *kernel,
 			HostPubKey: string(vmKey), HostKeyPath: strings.TrimSuffix(*hostKey, ".pub"),
 			StateDir: *stateDir, ConfigDir: *stateDir + "/config", SleepDir: *sleepDir, HostCA: hostCA,
-			SSHSuffix: *sshSuffix, WebDomain: webDomain, DNS: splitList(*dns),
+			SSHSuffix: *sshSuffix, WebDomain: webDomain,
 			Boxed: selfPath(),
 		}}
 	if err := b.hv.checkSetup(exec.LookPath); err != nil {
@@ -152,6 +152,20 @@ func main() {
 		if err := b.hv.Start(v); err != nil {
 			log.Printf("start %s: %v", v.Name, err)
 		}
+	}
+	// For the VMs, on the gateway: integrations and DNS (integrations.go, dns.go).
+	d := &DNS{Suffix: *sshSuffix, Upstream: splitList(*dns), Closed: b.dnsClosed}
+	pc, err := net.ListenPacket("udp", gatewayIP+":53")
+	if err != nil {
+		log.Fatal(err)
+	}
+	go func() { log.Fatal(d.ServeUDP(pc)) }()
+	for port, serve := range map[string]func(net.Listener) error{"53": d.ServeTCP, "80": b.proxy().Serve} {
+		ln, err := net.Listen("tcp", gatewayIP+":"+port)
+		if err != nil {
+			log.Fatal(err)
+		}
+		go func() { log.Fatal(serve(ln)) }()
 	}
 	go b.ReapLoop(time.Minute)
 	go b.SleepLoop(time.Minute)

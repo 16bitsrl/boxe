@@ -70,7 +70,8 @@ before you trust it with anything.
   `boxed` logs users in with OIDC, gives every VM host its own session cookie,
   and proxies to the VM with the user's email in `X-Box-Email`.
 - **Network**: VMs reach the internet only. They cannot reach each other, the
-  host, private networks, the tailnet or cloud metadata. Each tap may only
+  host (but for `boxed`'s DNS and integrations on the gateway), private
+  networks, the tailnet or cloud metadata. Each tap may only
   send with its own MAC and IP.
 - **Sleep**: with `-sleep-after`, a VM nobody uses (no SSH or web connection,
   little CPU and network) goes to sleep: Cloud Hypervisor saves its memory to
@@ -95,6 +96,22 @@ before you trust it with anything.
 - **Share links**: `ssh boxe share <vm> [port]` prints a link that shows that
   port of the VM to anyone who has it, without logging in. `unshare` makes
   the VM's links stop working; deleting the VM does too.
+- **Integrations**: API keys stay on the host. A member adds one
+  (`ssh boxe integrations add http stripe --target https://api.stripe.com
+  --header 'Authorization: Bearer ...'`, or `-` instead of a value to read
+  it from stdin) and attaches it to their VMs; in those VMs
+  `curl http://stripe.int.boxe/v1/customers` goes through `boxed`, which
+  adds the header on the way out. `boxed` knows the VM by its address and
+  answers 403 to any VM the integration is not attached to. A `github`
+  integration (a personal access token, optionally `--read-only`: fetch
+  but no push, only GET to the API) serves `git clone
+  http://github.int.boxe/OWNER/REPO` and the API at
+  `http://github.int.boxe/api/`; a VM has at most one. Copies keep their
+  source's integrations. `boxed` is the VMs' DNS server: it answers
+  `*.int.<ssh-suffix>` and forwards the rest to `-dns`.
+- **Egress**: `ssh boxe egress <vm> integrations` cuts a VM off the
+  internet: it reaches only its integrations, and its DNS answers only
+  their names. `ssh boxe egress <vm> all` opens it again. Copies keep it.
 - **Images**: besides the default image, admins can build others on the host
   (for example `image/laravel/`, with PHP, Composer and Node).
   `ssh boxe images` lists them and `ssh boxe new --image laravel` starts
@@ -124,6 +141,12 @@ ssh boxe wake <name>                       wake a VM up (connecting does too)
 ssh boxe keep-awake <name> on|off          never put this VM to sleep
 ssh boxe share <name> [port]               a link to the VM for anyone (port 8000)
 ssh boxe unshare <name>                    make the VM's links stop working
+ssh boxe egress <name> all|integrations     let the VM reach the internet, or only its integrations
+ssh boxe integrations                      your integrations: API secrets your VMs use without seeing them
+ssh boxe integrations add http <name> --target <url> [--header 'Name: value']
+ssh boxe integrations add github <name> --token <token> [--read-only]
+ssh boxe integrations rm <name>
+ssh boxe integrations attach|detach <name> <vm>
 ssh boxe images                            images to start a VM from
 ssh boxe whoami                            your GitHub username, as boxe knows you
 ssh boxe ssh-config                        config for ~/.ssh/config
@@ -131,7 +154,7 @@ ssh boxe known-hosts                       line for ~/.ssh/known_hosts
 ```
 
 Add `--json` to a VM command for output a program can read: `ls` and
-`images` print a list, `new`, `cp`, `fork`, `ttl` and `keep-awake` the VM,
+`images` print a list, `new`, `cp`, `fork`, `ttl`, `keep-awake` and `egress` the VM, `integrations` a list,
 `share` the link, the others the VM's name and new status, and errors
 `{"error": "..."}`.
 
@@ -192,6 +215,14 @@ Once per computer: `ssh boxe ssh-config >> ~/.ssh/config` and
   - Web sessions end 12 hours after the login at the identity provider.
     `/logout` ends them on every VM at once, and `boxed -revoke <email>`
     does it for someone else.
+- **Integrations' secrets are in the database**, in plain text, and so in
+  the backups (`boxe-backup.sh` saves the database). VMs never see them:
+  they only reach targets on public addresses, never the host, the LAN or
+  the tailnet. A target without a header, like a Slack webhook, is itself
+  the secret: `ssh boxe integrations` shows only its host.
+- **Egress `integrations` is enforced on the network**: the VM's tap may
+  send only to the gateway (DNS and integrations). Every DNS query of any VM
+  goes to `boxed`, whichever server it asked.
 - **Copies and backups are crash-consistent**, like a disk after a power cut.
 - **Not covered:** the identity provider and the TLS proxy are yours to
   secure. A hypervisor escape would still reach the host as the unprivileged

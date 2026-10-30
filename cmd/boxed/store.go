@@ -20,6 +20,7 @@ type VM struct {
 	Image     string    // base image snapshot the disk comes from
 	Expires   time.Time // when it is deleted by itself (--ttl); zero: never
 	KeepAwake bool      // never goes to sleep when unused
+	Egress    string    // egressAll, or egressIntegrations: it reaches nothing but the gateway
 }
 
 func (v VM) IP() string  { return fmt.Sprintf("10.42.%d.%d", v.Index>>8, v.Index&255) }
@@ -72,7 +73,26 @@ CREATE TABLE IF NOT EXISTS samples (
 	mem  INTEGER NOT NULL, -- bytes
 	disk INTEGER NOT NULL  -- bytes
 );
-CREATE INDEX IF NOT EXISTS samples_vm_at ON samples (vm, at);`)
+CREATE INDEX IF NOT EXISTS samples_vm_at ON samples (vm, at);
+-- Secrets of a member, added by the gateway to what their VMs send
+-- (integrations.go). In plain text, like the rest of this file.
+CREATE TABLE IF NOT EXISTS integrations (
+	owner       TEXT NOT NULL,
+	name        TEXT NOT NULL,
+	kind        TEXT NOT NULL, -- http or github
+	target      TEXT NOT NULL, -- http: the URL requests go to
+	header_name TEXT NOT NULL, -- http: the header added, or none
+	secret      TEXT NOT NULL, -- its value, or the GitHub token
+	read_only   INTEGER NOT NULL,
+	created_at  TEXT NOT NULL,
+	PRIMARY KEY (owner, name)
+);
+CREATE TABLE IF NOT EXISTS attachments (
+	owner       TEXT NOT NULL,
+	integration TEXT NOT NULL,
+	vm          TEXT NOT NULL,
+	PRIMARY KEY (owner, integration, vm)
+);`)
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +100,7 @@ CREATE INDEX IF NOT EXISTS samples_vm_at ON samples (vm, at);`)
 	db.Exec("ALTER TABLE vms ADD COLUMN image TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE vms ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE vms ADD COLUMN keep_awake INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE vms ADD COLUMN egress TEXT NOT NULL DEFAULT 'all'")
 	if _, err := db.Exec("ALTER TABLE user_keys ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''"); err == nil {
 		db.Exec("UPDATE user_keys SET updated_at = ?", time.Now().UTC().Format(time.RFC3339))
 	}
@@ -89,7 +110,7 @@ CREATE INDEX IF NOT EXISTS samples_vm_at ON samples (vm, at);`)
 func scanVM(row interface{ Scan(...any) error }) (VM, error) {
 	var v VM
 	var created, expires string
-	err := row.Scan(&v.Name, &v.Owner, &v.Index, &v.CPUs, &v.Mem, &created, &v.Image, &expires, &v.KeepAwake)
+	err := row.Scan(&v.Name, &v.Owner, &v.Index, &v.CPUs, &v.Mem, &created, &v.Image, &expires, &v.KeepAwake, &v.Egress)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, errNotFound
 	}
@@ -98,7 +119,7 @@ func scanVM(row interface{ Scan(...any) error }) (VM, error) {
 	return v, err
 }
 
-const vmCols = "name, owner, idx, cpus, mem, created_at, image, expires_at, keep_awake"
+const vmCols = "name, owner, idx, cpus, mem, created_at, image, expires_at, keep_awake, egress"
 
 func (s *Store) Get(name string) (VM, error) {
 	return scanVM(s.db.QueryRow("SELECT "+vmCols+" FROM vms WHERE name = ?", name))
@@ -131,8 +152,11 @@ func (s *Store) Insert(v *VM) error {
 		return err
 	}
 	v.Created = time.Now().UTC().Truncate(time.Second) // as stored
-	_, err = s.db.Exec("INSERT INTO vms ("+vmCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		v.Name, v.Owner, v.Index, v.CPUs, v.Mem, v.Created.Format(time.RFC3339), v.Image, timeCol(v.Expires), v.KeepAwake)
+	if v.Egress == "" {
+		v.Egress = egressAll
+	}
+	_, err = s.db.Exec("INSERT INTO vms ("+vmCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		v.Name, v.Owner, v.Index, v.CPUs, v.Mem, v.Created.Format(time.RFC3339), v.Image, timeCol(v.Expires), v.KeepAwake, v.Egress)
 	return err
 }
 
@@ -140,6 +164,16 @@ func (s *Store) Insert(v *VM) error {
 func (s *Store) SetExpires(name string, t time.Time) error {
 	_, err := s.db.Exec("UPDATE vms SET expires_at = ? WHERE name = ?", timeCol(t), name)
 	return err
+}
+
+func (s *Store) SetEgress(name, egress string) error {
+	_, err := s.db.Exec("UPDATE vms SET egress = ? WHERE name = ?", egress, name)
+	return err
+}
+
+// GetByIndex is the VM with that index, the one at its IP address.
+func (s *Store) GetByIndex(idx int) (VM, error) {
+	return scanVM(s.db.QueryRow("SELECT "+vmCols+" FROM vms WHERE idx = ?", idx))
 }
 
 func (s *Store) SetKeepAwake(name string, on bool) error {
@@ -155,10 +189,13 @@ func timeCol(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// Delete forgets the VM, its share links and its usage: a new VM with the
-// same name must not inherit them.
+// Delete forgets the VM, its share links, integrations and usage: a new VM
+// with the same name must not inherit them.
 func (s *Store) Delete(name string) error {
 	if _, err := s.Unshare(name); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec("DELETE FROM attachments WHERE vm = ?", name); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec("DELETE FROM samples WHERE vm = ?", name); err != nil {
@@ -273,4 +310,127 @@ func (s *Store) LogoutAt(email string) (int64, error) {
 func (s *Store) Dump(path string) error {
 	_, err := s.db.Exec("VACUUM INTO ?", path)
 	return err
+}
+
+// Integration is a member's secret for an API, which the gateway adds to
+// the requests of the VMs it is attached to (integrations.go).
+type Integration struct {
+	Owner, Name string
+	Kind        string // kindHTTP or kindGitHub
+	Target      string // kindHTTP: where requests go, e.g. https://api.stripe.com/v1
+	HeaderName  string // kindHTTP: the header added, e.g. Authorization; empty: none
+	Secret      string // the header's value, or the GitHub token
+	ReadOnly    bool   // kindGitHub: fetch, no push, only GET and HEAD to the API
+	Created     time.Time
+	VMs         []string // attached to, in List only
+}
+
+const integrationCols = "owner, name, kind, target, header_name, secret, read_only, created_at"
+
+func scanIntegration(row interface{ Scan(...any) error }) (Integration, error) {
+	var ig Integration
+	var created string
+	err := row.Scan(&ig.Owner, &ig.Name, &ig.Kind, &ig.Target, &ig.HeaderName, &ig.Secret, &ig.ReadOnly, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ig, errNotFound
+	}
+	ig.Created, _ = time.Parse(time.RFC3339, created)
+	return ig, err
+}
+
+func (s *Store) AddIntegration(ig Integration) error {
+	_, err := s.db.Exec("INSERT INTO integrations ("+integrationCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		ig.Owner, ig.Name, ig.Kind, ig.Target, ig.HeaderName, ig.Secret, ig.ReadOnly, timeCol(time.Now()))
+	return err
+}
+
+func (s *Store) Integration(owner, name string) (Integration, error) {
+	return scanIntegration(s.db.QueryRow("SELECT "+integrationCols+" FROM integrations WHERE owner = ? AND name = ?", owner, name))
+}
+
+// Integrations of owner, with the VMs each is attached to.
+func (s *Store) Integrations(owner string) ([]Integration, error) {
+	rows, err := s.db.Query("SELECT "+integrationCols+" FROM integrations WHERE owner = ? ORDER BY name", owner)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []Integration
+	for rows.Next() {
+		ig, err := scanIntegration(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, ig)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range list {
+		if list[i].VMs, err = s.strings("SELECT vm FROM attachments WHERE owner = ? AND integration = ? ORDER BY vm", owner, list[i].Name); err != nil {
+			return nil, err
+		}
+	}
+	return list, nil
+}
+
+func (s *Store) strings(query string, args ...any) ([]string, error) {
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []string{}
+	for rows.Next() {
+		var x string
+		if err := rows.Scan(&x); err != nil {
+			return nil, err
+		}
+		list = append(list, x)
+	}
+	return list, rows.Err()
+}
+
+// RemoveIntegration deletes it and its attachments.
+func (s *Store) RemoveIntegration(owner, name string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM attachments WHERE owner = ? AND integration = ?", owner, name); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM integrations WHERE owner = ? AND name = ?", owner, name); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Attach gives v the integration of its owner named name; idempotent.
+func (s *Store) Attach(v VM, name string) error {
+	_, err := s.db.Exec("INSERT OR IGNORE INTO attachments (owner, integration, vm) VALUES (?, ?, ?)", v.Owner, name, v.Name)
+	return err
+}
+
+func (s *Store) Detach(v VM, name string) error {
+	_, err := s.db.Exec("DELETE FROM attachments WHERE owner = ? AND integration = ? AND vm = ?", v.Owner, name, v.Name)
+	return err
+}
+
+// CopyAttachments gives the copy to the integrations of from.
+func (s *Store) CopyAttachments(from, to VM) error {
+	_, err := s.db.Exec("INSERT OR IGNORE INTO attachments (owner, integration, vm) SELECT owner, integration, ? FROM attachments WHERE owner = ? AND vm = ?",
+		to.Name, from.Owner, from.Name)
+	return err
+}
+
+// Attached is the integration v reaches at <name>.int.<suffix>: the one of
+// its owner named name and attached to it; for "github", also the GitHub
+// integration attached to it, whatever its name.
+func (s *Store) Attached(v VM, name string) (Integration, error) {
+	return scanIntegration(s.db.QueryRow(`SELECT i.owner, i.name, i.kind, i.target, i.header_name, i.secret, i.read_only, i.created_at
+		FROM integrations i JOIN attachments a ON a.owner = i.owner AND a.integration = i.name
+		WHERE a.vm = ? AND i.owner = ? AND (i.name = ? OR (? = 'github' AND i.kind = 'github'))
+		ORDER BY i.name = ? DESC LIMIT 1`, v.Name, v.Owner, name, name, name))
 }

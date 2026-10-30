@@ -20,6 +20,7 @@ import (
 	"github.com/anmitsu/go-shlex"
 	"github.com/gliderlabs/ssh"
 	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 )
 
 type ctxKey string
@@ -162,6 +163,13 @@ func (b *Box) help(cmd string) string {
   SSH keep-awake <name> on|off          never put this VM to sleep when unused
   SSH share <name> [port]               a link that shows the VM (port 8000) to anyone who has it
   SSH unshare <name>                    make the VM's links stop working
+  SSH egress <name> all|integrations    let the VM reach the internet, or only its integrations
+  SSH integrations                      your API secrets, which VMs use without seeing them:
+      integrations add http <name> --target <url> [--header 'Name: value']
+      integrations add github <name> --token <token> [--read-only]
+      integrations rm <name>
+      integrations attach|detach <name> <vm>
+    (- as a value reads it from stdin; in the VM: http://<name>.int.SUFFIX/)
   SSH images                            the images new VMs can start from
   SSH ssh-config                        config for ~/.ssh/config
   SSH known-hosts                       line for ~/.ssh/known_hosts
@@ -185,7 +193,7 @@ func (b *Box) session(s ssh.Session) {
 		s.Exit(0)
 		return
 	}
-	if err := b.run(s, user, s.RawCommand(), "ssh "+b.name+" "); err != nil {
+	if err := b.run(s, b.secretReader(s), user, s.RawCommand(), "ssh "+b.name+" "); err != nil {
 		fmt.Fprintln(s.Stderr(), "error:", err)
 		s.Exit(1)
 		return
@@ -194,8 +202,9 @@ func (b *Box) session(s ssh.Session) {
 }
 
 // run is one command line, as typed after `ssh boxe` or at the prompt;
-// cmd is how the help writes a command there.
-func (b *Box) run(w io.Writer, user, line, cmd string) error {
+// cmd is how the help writes a command there. secret reads what a command
+// takes from stdin (a value given as -).
+func (b *Box) run(w io.Writer, secret func(prompt string) (string, error), user, line, cmd string) error {
 	raw, agent, hasAgent := cutAgent(line)
 	words, _ := shlex.Split(raw, true)
 	args, asJSON := cutFlag(words, "--json")
@@ -236,6 +245,10 @@ func (b *Box) run(w io.Writer, user, line, cmd string) error {
 		err = b.cmdShare(o, user, args[1:])
 	case args[0] == "unshare":
 		err = b.cmdUnshare(o, user, args[1:])
+	case args[0] == "egress":
+		err = b.cmdEgress(o, user, args[1:])
+	case args[0] == "integrations":
+		err = b.cmdIntegrations(o, secret, user, args[1:])
 	case args[0] == "images":
 		err = b.cmdImages(o)
 	case args[0] == "ssh-config":
@@ -297,6 +310,37 @@ func cutFlag(args []string, flag string) ([]string, bool) {
 	return rest, found
 }
 
+// secretReader reads a value from the session's stdin: unechoed from a
+// terminal (ssh -t), else the first line of what is piped in.
+func (b *Box) secretReader(s ssh.Session) func(string) (string, error) {
+	return func(prompt string) (string, error) {
+		if _, _, isPty := s.Pty(); isPty {
+			return term.NewTerminal(s, "").ReadPassword(prompt)
+		}
+		return readLine(s)
+	}
+}
+
+// readLine reads up to a newline or the end, at most 8 KiB.
+func readLine(r io.Reader) (string, error) {
+	var line []byte
+	c := make([]byte, 1)
+	for len(line) < 8<<10 {
+		n, err := r.Read(c)
+		if n == 1 && c[0] == '\n' {
+			return string(line), nil
+		}
+		line = append(line, c[:n]...)
+		if err == io.EOF && len(line) > 0 {
+			return string(line), nil
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	return "", errors.New("line too long")
+}
+
 // vmJSON is a VM as `--json` shows it.
 type vmJSON struct {
 	Name         string  `json:"name"`
@@ -312,6 +356,7 @@ type vmJSON struct {
 	ReadySeconds float64 `json:"ready_seconds,omitempty"`
 	Expires      string  `json:"expires,omitempty"` // when it is deleted by itself (--ttl)
 	KeepAwake    bool    `json:"keep_awake,omitempty"`
+	Egress       string  `json:"egress"`          // all, or integrations: it reaches nothing else
 	Agent        string  `json:"agent,omitempty"` // the conversation --agent started
 	// What it uses, in ls: CPU over the last minute (100: one core), the
 	// RAM it takes on the host and the space its disk takes, in bytes.
@@ -328,6 +373,7 @@ func (b *Box) vmJSON(v VM) vmJSON {
 	}
 	j.Expires = timeCol(v.Expires)
 	j.KeepAwake = v.KeepAwake
+	j.Egress = v.Egress
 	return j
 }
 
@@ -621,12 +667,22 @@ func (b *Box) create(o output, user, name string, cpus int, mem string, srcName,
 		}
 	}
 	v := VM{Name: name, Owner: user, CPUs: cpus, Mem: mem, Image: image}
+	if src != nil {
+		v.Egress = src.Egress
+	}
 	if ttl > 0 {
 		v.Expires = start.Add(ttl)
 	}
 	if err := b.store.Insert(&v); err != nil {
 		b.mu.Unlock()
 		return err
+	}
+	if src != nil {
+		if err := b.store.CopyAttachments(*src, v); err != nil {
+			b.store.Delete(name)
+			b.mu.Unlock()
+			return err
+		}
 	}
 	var err error
 	if fork {
@@ -872,7 +928,7 @@ func (b *Box) cmdLs(o output, user string, args []string) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(o.w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tIP\tCPU\tRAM\tSTATE\tCPU%\tRAM USED\tDISK USED\tOWNER\tCREATED\tEXPIRES\tIMAGE")
+	fmt.Fprintln(w, "NAME\tIP\tCPU\tRAM\tSTATE\tCPU%\tRAM USED\tDISK USED\tOWNER\tCREATED\tEXPIRES\tIMAGE\tEGRESS")
 	for i, j := range list {
 		image := j.Image
 		if image == "" {
@@ -882,9 +938,9 @@ func (b *Box) cmdLs(o output, user string, args []string) error {
 		if j.CPUPercent > 0 {
 			cpu = fmt.Sprintf("%.0f%%", j.CPUPercent)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", j.Name, j.IP, j.CPUs, j.Mem, j.State,
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", j.Name, j.IP, j.CPUs, j.Mem, j.State,
 			cpu, size(j.MemUsed), size(j.DiskUsed), j.Owner,
-			vms[i].Created.Local().Format("2006-01-02 15:04"), expiresIn(vms[i].Expires, now), image)
+			vms[i].Created.Local().Format("2006-01-02 15:04"), expiresIn(vms[i].Expires, now), image, j.Egress)
 	}
 	return w.Flush()
 }
