@@ -19,7 +19,7 @@ func TestConfigArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := &Hypervisor{HostPubKey: "ssh-ed25519 HOST host\n", HostCA: ca,
-		SSHSuffix: "boxe", WebDomain: "boxe.example", DNS: []string{"9.9.9.9"}}
+		SSHSuffix: "boxe", WebDomain: "boxe.example"}
 	v := VM{Name: "quick-fox", Index: 2}
 	data, err := h.configArchive(v, "ssh-ed25519 USER u\n")
 	if err != nil {
@@ -66,7 +66,8 @@ func TestConfigArchive(t *testing.T) {
 	if e := check("etc/hosts", 0o644, 0, tar.TypeReg); !strings.Contains(e.contents, "127.0.1.1 quick-fox.boxe.example quick-fox\n") {
 		t.Errorf("hosts: %q", e.contents)
 	}
-	if e := check("etc/resolv.conf", 0o644, 0, tar.TypeReg); e.contents != "nameserver 9.9.9.9\n" {
+	// boxed's own DNS server, which knows the integrations' names.
+	if e := check("etc/resolv.conf", 0o644, 0, tar.TypeReg); e.contents != "nameserver 10.42.0.1\n" {
 		t.Errorf("resolv.conf: %q", e.contents)
 	}
 	// What the VM shows and tells its coding agents comes from boxed's
@@ -75,7 +76,8 @@ func TestConfigArchive(t *testing.T) {
 		t.Errorf("web-domain: %q", e.contents)
 	}
 	agents := check("home/exedev/.config/boxe/AGENTS.md", 0o644, vmUID, tar.TypeReg).contents
-	for _, want := range []string{"https://quick-fox.boxe.example", "https://quick-fox--<port>.boxe.example", "ssh boxe help"} {
+	for _, want := range []string{"https://quick-fox.boxe.example", "https://quick-fox--<port>.boxe.example", "ssh boxe help",
+		"http://<integration>.int.boxe/", "git clone http://github.int.boxe/OWNER/REPO", "ssh boxe egress"} {
 		if !strings.Contains(agents, want) {
 			t.Errorf("AGENTS.md lacks %q", want)
 		}

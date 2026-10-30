@@ -89,7 +89,7 @@ func (c *cli) setKey(user, provider, key string) (string, string, bool) {
 }
 
 // fromVM is a request a program in the VM at ip makes to the gateway.
-func fromVM(g *Gateway, ip, method, path, body string, header map[string]string) *httptest.ResponseRecorder {
+func llmRequest(g *Gateway, ip, method, path, body string, header map[string]string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, "http://10.42.0.1:2998"+path, strings.NewReader(body))
 	r.RemoteAddr = ip + ":40000"
 	for k, v := range header {
@@ -154,7 +154,7 @@ func TestGatewayAddsTheOwnersKey(t *testing.T) {
 	g := c.box.llm
 
 	anthropic.answer = `{"id":"m1","model":"claude-sonnet-5-5","usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":5000,"cache_creation_input_tokens":0}}`
-	w := fromVM(g, "10.42.0.2", "POST", "/anthropic/v1/messages", `{"model":"claude-sonnet-5-5"}`,
+	w := llmRequest(g, "10.42.0.2", "POST", "/anthropic/v1/messages", `{"model":"claude-sonnet-5-5"}`,
 		map[string]string{"X-Api-Key": "implicit", "Anthropic-Version": "2023-06-01"})
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"id":"m1"`) {
 		t.Fatalf("answer %d: %s", w.Code, w.Body)
@@ -169,17 +169,17 @@ func TestGatewayAddsTheOwnersKey(t *testing.T) {
 	}
 
 	// bob has no key: the error says how to add one.
-	w = fromVM(g, "10.42.0.3", "POST", "/anthropic/v1/messages", `{}`, map[string]string{"X-Api-Key": "implicit"})
+	w = llmRequest(g, "10.42.0.3", "POST", "/anthropic/v1/messages", `{}`, map[string]string{"X-Api-Key": "implicit"})
 	if w.Code != 401 || !strings.Contains(w.Body.String(), "ssh boxe llm set anthropic") {
 		t.Errorf("no key: %d %s", w.Code, w.Body)
 	}
 	// Not a VM of boxe.
-	if w := fromVM(g, "10.42.0.99", "POST", "/anthropic/v1/messages", `{}`, nil); w.Code != 403 {
+	if w := llmRequest(g, "10.42.0.99", "POST", "/anthropic/v1/messages", `{}`, nil); w.Code != 403 {
 		t.Errorf("unknown address: %d", w.Code)
 	}
 
 	// A key of one's own goes through as it is, and is counted too.
-	fromVM(g, "10.42.0.3", "POST", "/anthropic/v1/messages", `{}`, map[string]string{"X-Api-Key": "sk-ant-bobs-own"})
+	llmRequest(g, "10.42.0.3", "POST", "/anthropic/v1/messages", `{}`, map[string]string{"X-Api-Key": "sk-ant-bobs-own"})
 	if r, _ := anthropic.last(); r.Header.Get("X-Api-Key") != "sk-ant-bobs-own" {
 		t.Errorf("own key replaced: %q", r.Header.Get("X-Api-Key"))
 	}
@@ -215,7 +215,7 @@ func TestGatewayCountsStreams(t *testing.T) {
 	anthropic.answer = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-opus-5-5\",\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":100,\"output_tokens\":1}}}\n\n" +
 		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"hi\"}}\n\n" +
 		"event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":50}}\n\n"
-	w := fromVM(g, "10.42.0.2", "POST", "/anthropic/v1/messages", `{"stream":true}`, nil)
+	w := llmRequest(g, "10.42.0.2", "POST", "/anthropic/v1/messages", `{"stream":true}`, nil)
 	if !strings.Contains(w.Body.String(), `"text":"hi"`) {
 		t.Errorf("stream not passed on: %s", w.Body)
 	}
@@ -226,7 +226,7 @@ func TestGatewayCountsStreams(t *testing.T) {
 	openai.answer = "data: {\"model\":\"gpt-5-mini\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n" +
 		"data: {\"model\":\"gpt-5-mini\",\"choices\":[],\"usage\":{\"prompt_tokens\":300,\"completion_tokens\":20,\"prompt_tokens_details\":{\"cached_tokens\":100}}}\n\n" +
 		"data: [DONE]\n\n"
-	fromVM(g, "10.42.0.2", "POST", "/openai/chat/completions", `{"model":"gpt-5-mini","stream":true,"messages":[]}`,
+	llmRequest(g, "10.42.0.2", "POST", "/openai/chat/completions", `{"model":"gpt-5-mini","stream":true,"messages":[]}`,
 		map[string]string{"Authorization": "Bearer implicit", "Content-Type": "application/json"})
 	r, body := openai.last()
 	if r.URL.Path != "/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer sk-oai-alice" {
@@ -245,7 +245,7 @@ func TestGatewayCountsStreams(t *testing.T) {
 	// The Responses API.
 	openai.sse = false
 	openai.answer = `{"model":"gpt-5","usage":{"input_tokens":2000,"output_tokens":100,"input_tokens_details":{"cached_tokens":0}}}`
-	fromVM(g, "10.42.0.2", "POST", "/openai/responses", `{"model":"gpt-5"}`, nil)
+	llmRequest(g, "10.42.0.2", "POST", "/openai/responses", `{"model":"gpt-5"}`, nil)
 
 	var usage []llmUsageJSON
 	c.json("alice", "llm usage --json", &usage)
@@ -271,22 +271,22 @@ func TestGatewaySetup(t *testing.T) {
 	c.must("alice", "new test")
 	c.must("bob", "new other")
 	g := c.box.llm
-	if w := fromVM(g, "10.42.0.2", "GET", "/env", "", nil); strings.TrimSpace(w.Body.String()) != "" {
+	if w := llmRequest(g, "10.42.0.2", "GET", "/env", "", nil); strings.TrimSpace(w.Body.String()) != "" {
 		t.Errorf("env without keys: %q", w.Body)
 	}
-	if w := fromVM(g, "10.42.0.2", "GET", "/shelley.json", "", nil); strings.TrimSpace(w.Body.String()) != "{}" {
+	if w := llmRequest(g, "10.42.0.2", "GET", "/shelley.json", "", nil); strings.TrimSpace(w.Body.String()) != "{}" {
 		t.Errorf("shelley.json without keys: %q", w.Body)
 	}
 	c.setKey("alice", "anthropic", "sk-ant-alice")
-	env := fromVM(g, "10.42.0.2", "GET", "/env", "", nil).Body.String()
+	env := llmRequest(g, "10.42.0.2", "GET", "/env", "", nil).Body.String()
 	if !strings.Contains(env, "export ANTHROPIC_BASE_URL=http://10.42.0.1:2998/anthropic\n") || !strings.Contains(env, "export ANTHROPIC_API_KEY=") ||
 		strings.Contains(env, "OPENAI") || strings.Contains(env, "sk-ant-alice") {
 		t.Errorf("env: %q", env)
 	}
-	if w := fromVM(g, "10.42.0.2", "GET", "/shelley.json", "", nil); !strings.Contains(w.Body.String(), `"llm_gateway":"http://10.42.0.1:2998"`) {
+	if w := llmRequest(g, "10.42.0.2", "GET", "/shelley.json", "", nil); !strings.Contains(w.Body.String(), `"llm_gateway":"http://10.42.0.1:2998"`) {
 		t.Errorf("shelley.json: %q", w.Body)
 	}
-	if w := fromVM(g, "10.42.0.3", "GET", "/env", "", nil); strings.TrimSpace(w.Body.String()) != "" {
+	if w := llmRequest(g, "10.42.0.3", "GET", "/env", "", nil); strings.TrimSpace(w.Body.String()) != "" {
 		t.Errorf("bob's env: %q", w.Body)
 	}
 	// Shelley reads its configuration when it starts: the first key, and

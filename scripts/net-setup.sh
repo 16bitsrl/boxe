@@ -8,6 +8,7 @@ set -euo pipefail
 if [ -r /etc/boxe/net.conf ]; then . /etc/boxe/net.conf; fi
 SUBNET=${BOXE_SUBNET:-10.42.0.0/16}
 GATEWAY=${BOXE_GATEWAY:-10.42.0.1/16}
+GW=${GATEWAY%/*}   # boxed listens here for the VMs: integrations (80) and DNS (53)
 PROXY=${BOXE_PROXY:-}   # the only remote client of boxed's web port (the TLS proxy); empty: local only
 WEB_PORT=${BOXE_WEB_PORT:-8080}
 LLM_PORT=${BOXE_LLM_PORT:-2998} # boxed's LLM gateway, the one port of the host VMs reach
@@ -20,11 +21,13 @@ sysctl -qw net.ipv4.ip_forward=1
 
 # Anti-spoofing on the bridge ports: a tap only sends frames with its own MAC
 # and IPv4 address, nothing but IPv4 and ARP. boxed fills the sets per VM; a tap
-# not in them sends nothing. One nft transaction: atomic.
-nft -f - <<'NFT'
+# not in them sends nothing. Taps in "closed" (ssh boxe egress <vm>
+# integrations) reach the gateway only. One nft transaction: atomic.
+nft -f - <<NFT
 table bridge boxe {
 	set mac { type ifname . ether_addr; }
 	set ip4 { type ifname . ipv4_addr; }
+	set closed { type ifname; }
 	chain guard { type filter hook prerouting priority 0; policy accept; }
 }
 flush chain bridge boxe guard
@@ -36,6 +39,12 @@ table bridge boxe {
 		ether type arp iifname . arp saddr ip != @ip4 drop
 		ether type ip iifname . ip saddr != @ip4 drop
 		ether type != { ip, arp } drop
+		iifname @closed ether type arp accept
+		iifname @closed ip daddr $GW accept
+		# DNS to any server goes to the gateway's (BOXE-DNS below).
+		iifname @closed udp dport 53 accept
+		iifname @closed tcp dport 53 accept
+		iifname @closed drop
 	}
 }
 NFT
@@ -48,7 +57,12 @@ proxy_rule=""
 iptables-restore --noflush <<EOF
 *nat
 :BOXE-NAT - [0:0]
+:BOXE-DNS - [0:0]
 -A BOXE-NAT -s $SUBNET ! -o br0 -j MASQUERADE
+# Every DNS query of a VM goes to boxed, whatever server it asked: VMs made
+# before boxed had a DNS server still have 1.1.1.1 in resolv.conf.
+-A BOXE-DNS -i br0 -p udp --dport 53 -j DNAT --to-destination $GW:53
+-A BOXE-DNS -i br0 -p tcp --dport 53 -j DNAT --to-destination $GW:53
 COMMIT
 *mangle
 :BOXE-FORWARD - [0:0]
@@ -56,6 +70,9 @@ COMMIT
 # Docker and Tailscale leave alone: Tailscale's ts-forward accepts everything
 # going out on tailscale0 before any filter rule of ours.
 -A BOXE-FORWARD -i br0 -o br0 -j DROP
+# DNS goes to boxed only (BOXE-DNS): none passes through.
+-A BOXE-FORWARD -i br0 -p udp --dport 53 -j DROP
+-A BOXE-FORWARD -i br0 -p tcp --dport 53 -j DROP
 -A BOXE-FORWARD -i br0 -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
 -A BOXE-FORWARD -i br0 -d $PRIVATE -j DROP
 # Nothing reaches a VM from outside but answers: SSH and HTTP to VMs go
@@ -69,10 +86,14 @@ COMMIT
 # Docker sets FORWARD to DROP: VMs going out are accepted from DOCKER-USER.
 -A BOXE-DOCKER -i br0 -j ACCEPT
 -A BOXE-DOCKER -o br0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-# The host itself: VMs only get answers to what the host opened and the LLM
-# gateway, and boxed's web port only takes connections from the proxy.
+# The host itself: VMs only get answers to what the host opened, boxed's DNS,
+# integrations and LLM gateway on the gateway address, and boxed's web port
+# only takes connections from the proxy.
 -A BOXE-INPUT -i br0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
--A BOXE-INPUT -i br0 -p tcp -d ${GATEWAY%/*} --dport $LLM_PORT -j ACCEPT
+-A BOXE-INPUT -i br0 -d $GW -p udp --dport 53 -j ACCEPT
+-A BOXE-INPUT -i br0 -d $GW -p tcp --dport 53 -j ACCEPT
+-A BOXE-INPUT -i br0 -d $GW -p tcp --dport 80 -j ACCEPT
+-A BOXE-INPUT -i br0 -d $GW -p tcp --dport $LLM_PORT -j ACCEPT
 -A BOXE-INPUT -i br0 -j DROP
 -A BOXE-INPUT -p tcp --dport $WEB_PORT -i lo -j ACCEPT
 $proxy_rule
@@ -94,6 +115,7 @@ hook() { local cmd=$1 t=$2 from=$3 to=$4; $cmd -t "$t" -C "$from" -j "$to" 2>/de
 iptables -N DOCKER-USER 2>/dev/null || true
 iptables -C FORWARD -j DOCKER-USER 2>/dev/null || iptables -I FORWARD -j DOCKER-USER
 hook iptables nat POSTROUTING BOXE-NAT
+hook iptables nat PREROUTING BOXE-DNS
 hook iptables mangle FORWARD BOXE-FORWARD
 hook iptables filter DOCKER-USER BOXE-DOCKER
 hook iptables filter INPUT BOXE-INPUT

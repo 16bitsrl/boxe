@@ -40,12 +40,11 @@ type Hypervisor struct {
 	VMUser       string       // the hypervisors run as this user; empty: root (tests)
 	VMUserID     int          // its uid and gid: disks and config are chowned to them
 	VMGroupID    int
-	MinFree      int64    // bytes the pool must keep free after a new VM; 0: no check
-	SSHSuffix    string   // VMs are <vm>.<SSHSuffix> for SSH, e.g. boxe
-	WebDomain    string   // and https://<vm>.<WebDomain>; empty: no web front end
-	DNS          []string // resolvers for the VMs
-	Boxed        string   // this program, run by systemd to shut a VM down; empty: no clean shutdown
-	LLMGateway   string   // the LLM gateway as VMs reach it, e.g. http://10.42.0.1:2998; empty: none
+	MinFree      int64  // bytes the pool must keep free after a new VM; 0: no check
+	SSHSuffix    string // VMs are <vm>.<SSHSuffix> for SSH, e.g. boxe
+	WebDomain    string // and https://<vm>.<WebDomain>; empty: no web front end
+	Boxed        string // this program, run by systemd to shut a VM down; empty: no clean shutdown
+	LLMGateway   string // the LLM gateway as VMs reach it, e.g. http://10.42.0.1:2998; empty: none
 
 	DevDir string                                                              // zvol devices; default /dev/zvol
 	Exec   func(d time.Duration, name string, args ...string) ([]byte, error)  // runs commands; default: for real
@@ -324,7 +323,7 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 	}{
 		{"etc/hostname", host + "\n", 0o644, false},
 		{"etc/hosts", fmt.Sprintf("127.0.0.1 localhost\n127.0.1.1 %s\n::1 localhost ip6-localhost ip6-loopback\n", names), 0o644, false},
-		{"etc/resolv.conf", resolvConf(h.DNS), 0o644, false},
+		{"etc/resolv.conf", "nameserver " + gatewayIP + "\n", 0o644, false},
 		{"etc/machine-id", hex.EncodeToString(machineID) + "\n", 0o444, false},
 		{"etc/ssh/ssh_host_ed25519_key", hostKey, 0o600, false},
 		{"etc/ssh/ssh_host_ed25519_key.pub", hostPub, 0o644, false},
@@ -395,14 +394,6 @@ const shelleyConfig = "/home/exedev/.config/shelley/boxe.json"
 // runs, and the VM keeps the size it saw at boot.
 const configSize = 1 << 20
 
-func resolvConf(servers []string) string {
-	var b strings.Builder
-	for _, s := range servers {
-		fmt.Fprintf(&b, "nameserver %s\n", s)
-	}
-	return b.String()
-}
-
 // agentsMD tells the coding agents in the VM (Claude, Codex, opencode,
 // Shelley: the image links their instruction files here) where they are.
 func (h *Hypervisor) agentsMD(v VM) string {
@@ -416,11 +407,13 @@ func (h *Hypervisor) agentsMD(v VM) string {
 	if h.LLMGateway != "" {
 		llm = fmt.Sprintf("- Models: the API keys of the user's boxe account are added by the host to requests through its gateway. Login shells get `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY` and `OPENAI_BASE_URL`/`OPENAI_API_KEY` for the providers with a key (the key is a placeholder; the host puts the real one in); Shelley uses the gateway too. If they are missing, the user adds a key from their computer with `ssh boxe llm set anthropic` (or `openai`); `ssh boxe llm usage` shows what was used. The gateway is %s.", h.LLMGateway)
 	}
-	return fmt.Sprintf("You are running in a boxe VM named %s: a microVM on the team's own infrastructure. It is similar to exe.dev, but exe.dev's services (integrations, `ssh exe.dev`) are not available here.\n\n"+
+	return fmt.Sprintf("You are running in a boxe VM named %[1]s: a microVM on the team's own infrastructure. It is similar to exe.dev, but `ssh exe.dev` is not available here.\n\n"+
 		"- Ubuntu, user `exedev` with passwordless sudo, persistent disk. Docker works.\n"+
-		"- Internet works. The team's LAN, the host and the other VMs are not reachable from here.\n"+
-		"%s\n%s\n"+
-		"- VMs are created, copied and deleted from the user's computer with `ssh boxe` (`ssh boxe help`), not from inside the VM.\n", v.Name, web, llm)
+		"- Internet works, unless your user restricted this VM to its integrations (`ssh boxe egress`, from their computer): then nothing else answers and only integration names resolve. The team's LAN, the host and the other VMs are not reachable from here.\n"+
+		"- Integrations: your user keeps API secrets on the host and attaches them to this VM (`ssh boxe integrations`, from their computer). Call one at http://<integration>.int.%[3]s/<path>, plain HTTP (e.g. `curl http://stripe.int.%[3]s/v1/customers`): the host adds the credentials on the way out, so you never see the keys; do not ask for them nor send your own. An integration not attached to this VM answers 403.\n"+
+		"- GitHub, if your user attached it: `git clone http://github.int.%[3]s/OWNER/REPO` (fetch and push too, unless it is read-only) and the API at http://github.int.%[3]s/api/ (e.g. `curl http://github.int.%[3]s/api/user`).\n"+
+		"%[4]s\n%[2]s\n"+
+		"- VMs are created, copied and deleted from the user's computer with `ssh boxe` (`ssh boxe help`), not from inside the VM.\n", v.Name, web, h.SSHSuffix, llm)
 }
 
 // newHostKey makes the VM's SSH host key and its certificate, signed by
@@ -616,7 +609,21 @@ func (h *Hypervisor) guard(v VM) error {
 	if err := h.run("nft", fmt.Sprintf(`add element bridge boxe mac { "%s" . %s }`, tap(v), v.MAC())); err != nil {
 		return err
 	}
-	return h.run("nft", fmt.Sprintf(`add element bridge boxe ip4 { "%s" . %s }`, tap(v), v.IP()))
+	if err := h.run("nft", fmt.Sprintf(`add element bridge boxe ip4 { "%s" . %s }`, tap(v), v.IP())); err != nil {
+		return err
+	}
+	return h.egress(v)
+}
+
+// egress closes the VM's tap to all but the gateway (net-setup.sh), or
+// opens it, as v.Egress says. Opening is best effort: a tap left closed
+// is safe.
+func (h *Hypervisor) egress(v VM) error {
+	if v.Egress == egressIntegrations {
+		return h.run("nft", fmt.Sprintf(`add element bridge boxe closed { "%s" }`, tap(v)))
+	}
+	h.run("nft", fmt.Sprintf(`delete element bridge boxe closed { "%s" }`, tap(v)))
+	return nil
 }
 
 // State is running, starting, failed, sleeping or stopped.
@@ -708,6 +715,7 @@ func (h *Hypervisor) Destroy(v VM) error {
 	h.run("ip", "link", "del", tap(v))
 	h.run("nft", fmt.Sprintf(`delete element bridge boxe mac { "%s" . %s }`, tap(v), v.MAC()))
 	h.run("nft", fmt.Sprintf(`delete element bridge boxe ip4 { "%s" . %s }`, tap(v), v.IP()))
+	h.run("nft", fmt.Sprintf(`delete element bridge boxe closed { "%s" }`, tap(v)))
 	h.run("ip", "neigh", "del", v.IP(), "dev", "br0")
 	os.RemoveAll(vmRunDir(v.Name))
 	os.Remove(h.config(v.Name))

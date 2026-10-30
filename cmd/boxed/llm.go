@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -669,13 +668,4 @@ func (b *Box) restartShelley(user string) {
 		}()
 	}
 	wg.Wait()
-}
-
-// readLine reads one line, the answer to ask, from a session without a terminal.
-func readLine(r io.Reader) (string, error) {
-	line, err := bufio.NewReader(io.LimitReader(r, 4096)).ReadString('\n')
-	if err != nil && line == "" {
-		return "", fmt.Errorf("no key on the input")
-	}
-	return line, nil
 }

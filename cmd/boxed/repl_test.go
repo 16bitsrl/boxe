@@ -154,3 +154,22 @@ func TestNoPromptWithoutTerminal(t *testing.T) {
 		t.Errorf("ssh boxe from a script should print help and exit, got ok=%v:\n%s", ok, out)
 	}
 }
+
+func TestPromptCompletesIntegrations(t *testing.T) {
+	c := newCLI(t, "alice")
+	c.must("alice", "new web")
+	c.must("alice", "integrations add http stripe --target https://api.stripe.com")
+	for line, want := range map[string]string{
+		"integ":                        "integrations ",
+		"integrations at":              "integrations attach ",
+		"integrations add gi":          "integrations add github ",
+		"integrations attach st":       "integrations attach stripe ",
+		"integrations attach stripe w": "integrations attach stripe web ",
+		"egress w":                     "egress web ",
+		"egress web int":               "egress web integrations ",
+	} {
+		if got, _, ok := c.box.complete("alice", line, len(line)); !ok || got != want {
+			t.Errorf("%q: %q %v, want %q", line, got, ok, want)
+		}
+	}
+}

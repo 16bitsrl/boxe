@@ -10,7 +10,7 @@ import (
 
 // commands are what tab completes first at the prompt.
 var commands = []string{"new", "ls", "rm", "cp", "fork", "ttl", "restart", "sleep", "wake", "keep-awake",
-	"share", "unshare", "exec", "images", "llm", "token", "ssh-config", "known-hosts", "whoami", "help", "exit"}
+	"share", "unshare", "exec", "egress", "integrations", "images", "llm", "token", "ssh-config", "known-hosts", "whoami", "help", "exit"}
 
 // prompt is `ssh boxe` from a terminal: one command after another, with
 // history and tab completion, until exit or ctrl-d.
@@ -54,9 +54,26 @@ func (b *Box) complete(user, line string, pos int) (string, int, bool) {
 	start := strings.LastIndexByte(before, ' ') + 1
 	word := before[start:]
 	var options []string
-	if strings.TrimSpace(before[:start]) == "" {
+	prev := strings.Fields(before[:start])
+	integration := len(prev) == 2 && prev[0] == "integrations" && (prev[1] == "rm" || prev[1] == "attach" || prev[1] == "detach")
+	switch {
+	case len(prev) == 0:
 		options = commands
-	} else {
+	case len(prev) == 1 && prev[0] == "integrations":
+		options = []string{"add", "rm", "attach", "detach", "ls"}
+	case len(prev) == 2 && prev[0] == "integrations" && prev[1] == "add":
+		options = []string{kindHTTP, kindGitHub}
+	case len(prev) == 2 && prev[0] == "egress":
+		options = []string{egressAll, egressIntegrations}
+	case integration:
+		list, err := b.store.Integrations(user)
+		if err != nil {
+			return "", 0, false
+		}
+		for _, ig := range list {
+			options = append(options, ig.Name)
+		}
+	default:
 		vms, err := b.store.List(user)
 		if err != nil {
 			return "", 0, false
