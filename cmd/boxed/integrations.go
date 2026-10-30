@@ -463,6 +463,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				pr.Out.Header.Set(header, value)
 			}
 		},
+		ModifyResponse: func(res *http.Response) error {
+			if ig.Kind == kindHTTP {
+				hideTarget(res.Header, u, "http://"+name+".int."+p.b.hv.SSHSuffix)
+			}
+			return nil
+		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			// The URL may be the secret: not in the log.
 			var ue *url.Error
@@ -474,6 +480,27 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	rp.ServeHTTP(w, r)
+}
+
+// hideTarget rewrites the headers of an answer that name the target, as
+// a redirect does, to the integration's own address (base): the target's
+// path may be the secret, as in a webhook.
+func hideTarget(h http.Header, target *url.URL, base string) {
+	path := strings.TrimSuffix(target.Path, "/")
+	if path == "" {
+		return
+	}
+	for _, k := range []string{"Location", "Content-Location", "Link", "Refresh"} {
+		for i, v := range h.Values(k) {
+			for _, scheme := range []string{"https://", "http://"} {
+				v = strings.ReplaceAll(v, scheme+target.Host+path, base)
+			}
+			if v = strings.ReplaceAll(v, path, ""); v == "" {
+				v = "/"
+			}
+			h[http.CanonicalHeaderKey(k)][i] = v
+		}
+	}
 }
 
 var errNotPublic = errors.New("not a public address")

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -80,9 +81,28 @@ func newGateway(store *Store, addr string) *Gateway {
 // URL is the gateway as VMs reach it.
 func (g *Gateway) URL() string { return "http://" + g.addr }
 
-// vmOf is the VM a request comes from.
+type gatewayConnKey struct{}
+
+// ConnContext pins a connection to the VM that opened it (http.Server).
+func (g *Gateway) ConnContext(ctx context.Context, c net.Conn) context.Context {
+	if v, ok := g.vmAt(c.RemoteAddr().String()); ok {
+		return context.WithValue(ctx, gatewayConnKey{}, v)
+	}
+	return ctx
+}
+
+// vmOf is the VM a request comes from: the one at its address, if it is
+// still the one that opened the connection. Another VM that took the
+// address since does not get the first one's owner's key.
 func (g *Gateway) vmOf(r *http.Request) (VM, bool) {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	v, ok := g.vmAt(r.RemoteAddr)
+	conn, pinned := r.Context().Value(gatewayConnKey{}).(VM)
+	return v, ok && pinned && conn.same(v) && conn.Name == v.Name
+}
+
+// vmAt is the VM at addr, an address of the VM network.
+func (g *Gateway) vmAt(addr string) (VM, bool) {
+	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return VM{}, false
 	}
@@ -254,6 +274,7 @@ func noWebTools(r *http.Request) error {
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	var req struct {
+		Model            string
 		Tools            []struct{ Type string }
 		MCPServers       json.RawMessage `json:"mcp_servers"`
 		WebSearchOptions json.RawMessage `json:"web_search_options"`
@@ -261,14 +282,31 @@ func noWebTools(r *http.Request) error {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return errors.New("this VM reaches only its integrations: the request is not JSON, so it cannot be checked for web tools")
 	}
-	web := req.MCPServers != nil || req.WebSearchOptions != nil
+	// Only tools that run in the VM, which the model asks for and the VM
+	// carries out: those that run at the provider may go on the web.
+	ok := req.MCPServers == nil && req.WebSearchOptions == nil && !strings.Contains(strings.ToLower(req.Model), "search")
 	for _, t := range req.Tools {
-		web = web || strings.HasPrefix(t.Type, "web_") || strings.HasPrefix(t.Type, "mcp")
+		ok = ok && clientTool(t.Type)
 	}
-	if web {
-		return errors.New("this VM reaches only its integrations, so the provider's web search, web fetch and MCP tools are off (ssh boxe egress)")
+	if !ok {
+		return errors.New("this VM reaches only its integrations, so only tools that run in the VM are on: no web search, web fetch, MCP servers, code run at the provider, nor search models (ssh boxe egress)")
 	}
 	return nil
+}
+
+// clientTool says whether a tool of type typ runs in the VM: a function
+// of the program's, or one of Anthropic's tools that the client carries out.
+func clientTool(typ string) bool {
+	switch typ {
+	case "", "function", "custom":
+		return true
+	}
+	for _, p := range []string{"bash_", "text_editor_", "computer_", "memory_"} {
+		if strings.HasPrefix(typ, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // ownKeyMissing answers a request that needs the owner's key when there is none.

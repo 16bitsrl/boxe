@@ -161,7 +161,7 @@ func main() {
 		} else {
 			b.llm = newGateway(store, *llmAddr)
 			b.hv.LLMGateway = b.llm.URL()
-			srv := &http.Server{Handler: b.llm, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+			srv := &http.Server{Handler: b.llm, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, ConnContext: b.llm.ConnContext}
 			go func() { log.Printf("LLM gateway stopped: %v", srv.Serve(ln)) }()
 		}
 	}

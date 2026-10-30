@@ -3,8 +3,10 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -95,7 +97,24 @@ func (c *cli) setKey(user, provider, key string) (string, string, bool) {
 
 // llmRequest is a request a program in the VM at ip makes to the gateway.
 func llmRequest(g *Gateway, ip, method, path, body string, header map[string]string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(method, "http://10.42.0.1:2998"+path, strings.NewReader(body))
+	return llmRequestOn(g, g.ConnContext(context.Background(), addrConn{ip + ":40000"}), ip, method, path, body, header)
+}
+
+// addrConn is a connection from addr, for ConnContext.
+type addrConn struct{ addr string }
+
+func (c addrConn) Read([]byte) (int, error)         { return 0, io.EOF }
+func (c addrConn) Write(b []byte) (int, error)      { return len(b), nil }
+func (c addrConn) Close() error                     { return nil }
+func (c addrConn) LocalAddr() net.Addr              { return &net.TCPAddr{} }
+func (c addrConn) RemoteAddr() net.Addr             { a, _ := net.ResolveTCPAddr("tcp", c.addr); return a }
+func (c addrConn) SetDeadline(time.Time) error      { return nil }
+func (c addrConn) SetReadDeadline(time.Time) error  { return nil }
+func (c addrConn) SetWriteDeadline(time.Time) error { return nil }
+
+// llmRequestOn is a request on a connection ctx came from, kept open.
+func llmRequestOn(g *Gateway, ctx context.Context, ip, method, path, body string, header map[string]string) *httptest.ResponseRecorder {
+	r := httptest.NewRequestWithContext(ctx, method, "http://10.42.0.1:2998"+path, strings.NewReader(body))
 	r.RemoteAddr = ip + ":40000"
 	for k, v := range header {
 		r.Header.Set(k, v)
@@ -405,6 +424,7 @@ func TestGatewayStaysInTheAPI(t *testing.T) {
 			r.URL.Path = strings.ReplaceAll(p, "%2e", ".")
 		}
 		r.RemoteAddr = "10.42.0.2:40000"
+		r = r.WithContext(c.box.llm.ConnContext(r.Context(), addrConn{r.RemoteAddr}))
 		w := httptest.NewRecorder()
 		n := len(openai.reqs)
 		c.box.llm.ServeHTTP(w, r)
@@ -423,6 +443,7 @@ func TestGatewayLargeRequest(t *testing.T) {
 	r := httptest.NewRequest("POST", "http://10.42.0.1:2998/openai/chat/completions", io.MultiReader(strings.NewReader(big)))
 	r.ContentLength = -1 // chunked
 	r.RemoteAddr = "10.42.0.2:40000"
+	r = r.WithContext(c.box.llm.ConnContext(r.Context(), addrConn{r.RemoteAddr}))
 	c.box.llm.ServeHTTP(httptest.NewRecorder(), r)
 	if _, body := openai.last(); body != big {
 		t.Errorf("large body changed: %d bytes, want %d", len(body), len(big))
@@ -548,7 +569,7 @@ func TestGatewayStreamsLive(t *testing.T) {
 	g.upstream["anthropic"] = up.URL
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.RemoteAddr = "10.42.0.2:40000"
-		g.ServeHTTP(w, r)
+		g.ServeHTTP(w, r.WithContext(g.ConnContext(r.Context(), addrConn{r.RemoteAddr})))
 	}))
 	defer gw.Close()
 	defer close(end) // before the servers wait for the request to end
@@ -593,10 +614,25 @@ func TestGatewayRestrictedVMHasNoWebTools(t *testing.T) {
 		{"/openai/responses", `{"model":"m","tools":[{"type":"mcp","server_url":"https://example.com"}]}`},
 		{"/openai/chat/completions", `{"model":"m","web_search_options":{}}`},
 		{"/openai/responses", `not json`},
+		{"/openai/responses", `{"model":"m","tools":[{"type":"shell","environment":{}}]}`},
+		{"/openai/responses", `{"model":"m","tools":[{"type":"namespace","tools":[{"type":"web_search"}]}]}`},
+		{"/openai/chat/completions", `{"model":"gpt-5-search-api","messages":[]}`},
+		{"/anthropic/v1/messages", `{"model":"m","tools":[{"type":"code_execution_20250825","name":"code_execution"}]}`},
 	} {
 		if w := llmRequest(g, "10.42.0.2", "POST", req.path, req.body, nil); w.Code != http.StatusForbidden {
 			t.Errorf("%s %s: %d", req.path, req.body, w.Code)
 		}
+	}
+	for _, ok := range []string{
+		`{"model":"m","tools":[{"type":"bash_20250124","name":"bash"},{"type":"text_editor_20250728","name":"str_replace_based_edit_tool"}]}`,
+		`{"model":"m","tools":[{"type":"custom","name":"x","input_schema":{"type":"object"}}]}`,
+	} {
+		if w := llmRequest(g, "10.42.0.2", "POST", "/anthropic/v1/messages", ok, nil); w.Code != 200 {
+			t.Errorf("client tools %s: %d %s", ok, w.Code, w.Body)
+		}
+	}
+	if w := llmRequest(g, "10.42.0.2", "POST", "/openai/responses", `{"model":"m","tools":[{"type":"function","name":"f"}]}`, nil); w.Code != 200 {
+		t.Errorf("a function tool: %d %s", w.Code, w.Body)
 	}
 	ok := `{"model":"m","tools":[{"name":"get_weather","input_schema":{"type":"object"}}]}`
 	if w := llmRequest(g, "10.42.0.2", "POST", "/anthropic/v1/messages", ok, nil); w.Code != 200 {
@@ -614,5 +650,25 @@ func TestGatewayRestrictedVMHasNoWebTools(t *testing.T) {
 		if w := llmRequest(g, "10.42.0.2", "POST", req.path, req.body, nil); w.Code != 200 {
 			t.Errorf("with egress all, %s %s: %d %s", req.path, req.body, w.Code, w.Body)
 		}
+	}
+}
+
+// A connection to the gateway is the VM that opened it: if that VM goes and
+// another takes its address, requests on it are refused, not served with
+// the other VM's owner's key.
+func TestGatewayPinsTheConnection(t *testing.T) {
+	c, anthropic, _ := llmCLI(t, "alice", "bob")
+	c.must("alice", "new test") // 10.42.0.2
+	c.setKey("bob", "anthropic", "sk-ant-alice")
+	g := c.box.llm
+	anthropic.answer = `{"id":"m1"}`
+	ctx := g.ConnContext(context.Background(), addrConn{"10.42.0.2:40000"})
+	c.must("alice", "rm test")
+	c.must("bob", "new other") // 10.42.0.2 again
+	if w := llmRequestOn(g, ctx, "10.42.0.2", "POST", "/anthropic/v1/messages", `{}`, nil); w.Code != http.StatusForbidden {
+		t.Errorf("request on the old VM's connection: %d %s", w.Code, w.Body)
+	}
+	if w := llmRequest(g, "10.42.0.2", "POST", "/anthropic/v1/messages", `{}`, nil); w.Code != 200 {
+		t.Errorf("a new connection of the new VM: %d %s", w.Code, w.Body)
 	}
 }

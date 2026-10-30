@@ -147,8 +147,9 @@ before you trust it with anything.
 - **Egress**: `ssh boxe egress <vm> integrations` cuts a VM off the
   internet: it reaches only its integrations, and its DNS answers only
   their names. `ssh boxe egress <vm> all` opens it again. Copies keep it.
-  The models stay reachable through the LLM gateway, but not the
-  providers' web search, web fetch and MCP tools.
+  The models stay reachable through the LLM gateway, with only tools that
+  run in the VM: no web search, web fetch, MCP servers or code run at the
+  provider, and no search models.
 - **Images**: besides the default image, admins can build others on the host
   (for example `image/laravel/`, with PHP, Composer and Node).
   `ssh boxe images` lists them and `ssh boxe new --image laravel` starts

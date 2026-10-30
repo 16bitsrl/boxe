@@ -577,3 +577,39 @@ func TestPublicAddresses(t *testing.T) {
 		}
 	}
 }
+
+// When the target's URL is the secret, a redirect or a header naming it
+// does not hand it to the VM: it is told the integration's own address.
+func TestProxyHidesTheTargetInAnswers(t *testing.T) {
+	var host string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "https://"+host+"/services/T0/B0/xyz/")
+		w.Header().Set("Content-Location", "/services/T0/B0/xyz")
+		w.Header().Set("Link", "<http://"+host+"/services/T0/B0/xyz/more>; rel=next")
+		w.Header().Set("Refresh", "0; url=/services/T0/B0/xyz/again")
+		w.WriteHeader(http.StatusMovedPermanently)
+	}))
+	defer up.Close()
+	host = strings.TrimPrefix(up.URL, "http://")
+	c := newCLI(t, "alice")
+	c.must("alice", "new test")
+	c.input("alice", "integrations add http slack --target -", up.URL+"/services/T0/B0/xyz\n")
+	c.must("alice", "integrations attach slack test")
+	_, client := serveProxy(t, testProxy(c))
+	res, err := client.Post("http://slack.int.boxe/", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	for k, v := range res.Header {
+		if strings.Contains(strings.Join(v, " "), "xyz") {
+			t.Errorf("%s gives the secret away: %q", k, v)
+		}
+	}
+	if l := res.Header.Get("Location"); l != "http://slack.int.boxe/" {
+		t.Errorf("Location %q", l)
+	}
+	if l := res.Header.Get("Link"); l != "<http://slack.int.boxe/more>; rel=next" {
+		t.Errorf("Link %q", l)
+	}
+}
