@@ -45,6 +45,7 @@ type Hypervisor struct {
 	WebDomain    string   // and https://<vm>.<WebDomain>; empty: no web front end
 	DNS          []string // resolvers for the VMs
 	Boxed        string   // this program, run by systemd to shut a VM down; empty: no clean shutdown
+	LLMGateway   string   // the LLM gateway as VMs reach it, e.g. http://10.42.0.1:2998; empty: none
 
 	DevDir string                                                              // zvol devices; default /dev/zvol
 	Exec   func(d time.Duration, name string, args ...string) ([]byte, error)  // runs commands; default: for real
@@ -319,6 +320,26 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 		{"home/exedev/.config/boxe/AGENTS.md", h.agentsMD(v), 0o644, true},
 		{"etc/boxe/id", hex.EncodeToString(id) + "\n", 0o644, false},
 	}
+	if g := h.LLMGateway; g != "" {
+		// A proxy set in the VM must not answer for the host.
+		host, _, _ := net.SplitHostPort(strings.TrimPrefix(g, "http://"))
+		// From the configuration, not the image: new VMs of every image,
+		// and copies of older VMs, get them. VMs made before do not.
+		files = append(files[:len(files)-1], []struct {
+			path, data string
+			mode       int64
+			user       bool
+		}{
+			{"etc/profile.d/boxe-llm.sh", "# The API keys of the user's boxe account (ssh boxe llm): the host adds them\n" +
+				"# to the requests that go through its gateway.\n" +
+				"eval \"$(curl -sf --noproxy " + host + " --connect-timeout 1 --max-time 2 " + g + "/env 2>/dev/null)\"\n", 0o644, false},
+			{"etc/systemd/system/shelley.service.d/llm.conf", "# Shelley uses the boxe gateway when its user has a key there.\n[Service]\n" +
+				"ExecStartPre=-/bin/sh -c 'curl -sf --noproxy " + host + " --connect-timeout 1 --max-time 3 -o " + shelleyConfig + " " + g + "/shelley.json || echo {} > " + shelleyConfig + "'\n" +
+				"ExecStart=\nExecStart=/usr/local/bin/shelley -db /home/exedev/.config/shelley/shelley.db -config " + shelleyConfig +
+				" serve -systemd-activation -require-header X-Box-Email\n", 0o644, false},
+			files[len(files)-1], // the id stays last
+		}...)
+	}
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	now := time.Now()
@@ -353,6 +374,8 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 	return append(buf.Bytes(), make([]byte, configSize-buf.Len())...), nil
 }
 
+const shelleyConfig = "/home/exedev/.config/shelley/boxe.json"
+
 // configSize is the size of every config disk: a fork swaps it while the VM
 // runs, and the VM keeps the size it saw at boot.
 const configSize = 1 << 20
@@ -374,11 +397,15 @@ func (h *Hypervisor) agentsMD(v VM) string {
 			"- Only logged-in members of the team reach these URLs. The proxy sends the user's email in the `X-Box-Email` header (it drops any `X-Box-*` header sent by clients) and `X-Forwarded-Proto: https`. Visitors with a share link (`ssh boxe share`) come without `X-Box-Email`.\n"+
 			"- A desktop with Google Chrome: `sudo systemctl start boxe-desktop`, then run graphical programs with `DISPLAY=:1` (e.g. a headed browser to try a UI). Your user watches it at https://%[1]s--desktop.%[2]s.", v.Name, h.WebDomain)
 	}
-	return fmt.Sprintf("You are running in a boxe VM named %s: a microVM on the team's own infrastructure. It is similar to exe.dev, but exe.dev's services (LLM gateway, integrations, `ssh exe.dev`) are not available here: Shelley uses the models and API keys its user added in it.\n\n"+
+	llm := "- Shelley uses the models and API keys its user added in it."
+	if h.LLMGateway != "" {
+		llm = fmt.Sprintf("- Models: the API keys of the user's boxe account are added by the host to requests through its gateway. Login shells get `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY` and `OPENAI_BASE_URL`/`OPENAI_API_KEY` for the providers with a key (the key is a placeholder; the host puts the real one in); Shelley uses the gateway too. If they are missing, the user adds a key from their computer with `ssh boxe llm set anthropic` (or `openai`); `ssh boxe llm usage` shows what was used. The gateway is %s.", h.LLMGateway)
+	}
+	return fmt.Sprintf("You are running in a boxe VM named %s: a microVM on the team's own infrastructure. It is similar to exe.dev, but exe.dev's services (integrations, `ssh exe.dev`) are not available here.\n\n"+
 		"- Ubuntu, user `exedev` with passwordless sudo, persistent disk. Docker works.\n"+
 		"- Internet works. The team's LAN, the host and the other VMs are not reachable from here.\n"+
-		"%s\n"+
-		"- VMs are created, copied and deleted from the user's computer with `ssh boxe` (`ssh boxe help`), not from inside the VM.\n", v.Name, web)
+		"%s\n%s\n"+
+		"- VMs are created, copied and deleted from the user's computer with `ssh boxe` (`ssh boxe help`), not from inside the VM.\n", v.Name, web, llm)
 }
 
 // newHostKey makes the VM's SSH host key and its certificate, signed by

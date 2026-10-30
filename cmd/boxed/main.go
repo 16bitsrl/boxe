@@ -56,6 +56,7 @@ func main() {
 		minFree     = flag.Int64("min-free-gb", 20, "refuse new VMs when the pool has less free space (GB)")
 		sleepDir    = flag.String("sleep-dir", "", "where sleeping VMs keep their memory, e.g. /boxe/sleep (a ZFS dataset); empty: VMs never sleep")
 		sleepAfter  = flag.Duration("sleep-after", 0, "put a VM to sleep after this long unused (no SSH or web connection, little CPU and traffic), e.g. 30m; 0: never")
+		llmAddr     = flag.String("llm-gateway", "10.42.0.1:2998", "address on the VM bridge of the LLM gateway, which adds the members' API keys (ssh boxe llm); empty to disable")
 		powerOffVM  = flag.String("power-off", "", "internal, run by systemd: shut down the VM behind this API socket (hypervisor pid in $MAINPID)")
 	)
 	flag.Parse()
@@ -139,6 +140,17 @@ func main() {
 		}}
 	if err := b.hv.checkSetup(exec.LookPath); err != nil {
 		log.Fatal(err)
+	}
+
+	if *llmAddr != "" {
+		if ln, err := net.Listen("tcp", *llmAddr); err != nil {
+			log.Printf("LLM gateway off: %v", err)
+		} else {
+			b.llm = newGateway(store, *llmAddr)
+			b.hv.LLMGateway = b.llm.URL()
+			srv := &http.Server{Handler: b.llm, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+			go func() { log.Printf("LLM gateway stopped: %v", srv.Serve(ln)) }()
+		}
 	}
 
 	go b.RefreshLoop(10 * time.Minute)

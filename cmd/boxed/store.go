@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -36,6 +37,18 @@ var errNotFound = errors.New("not found")
 type Store struct{ db *sql.DB }
 
 func openStore(path string) (*Store, error) {
+	// It holds the members' API keys: root only. SQLite gives its -wal and
+	// -shm files the database's mode.
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	f.Close()
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(p, 0o600); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
 	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
@@ -72,7 +85,27 @@ CREATE TABLE IF NOT EXISTS samples (
 	mem  INTEGER NOT NULL, -- bytes
 	disk INTEGER NOT NULL  -- bytes
 );
-CREATE INDEX IF NOT EXISTS samples_vm_at ON samples (vm, at);`)
+CREATE INDEX IF NOT EXISTS samples_vm_at ON samples (vm, at);
+CREATE TABLE IF NOT EXISTS llm_keys (
+	user       TEXT NOT NULL,
+	provider   TEXT NOT NULL,
+	key        TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (user, provider)
+);
+CREATE TABLE IF NOT EXISTS llm_usage (
+	at          INTEGER NOT NULL, -- Unix seconds
+	user        TEXT NOT NULL,
+	vm          TEXT NOT NULL,
+	provider    TEXT NOT NULL,
+	model       TEXT NOT NULL,
+	input       INTEGER NOT NULL, -- tokens, without those read from or written to the cache
+	output      INTEGER NOT NULL,
+	cache_read  INTEGER NOT NULL,
+	cache_write INTEGER NOT NULL,
+	cost        REAL              -- USD at the prices of the time; NULL: unknown model
+);
+CREATE INDEX IF NOT EXISTS llm_usage_user_at ON llm_usage (user, at);`)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +135,11 @@ const vmCols = "name, owner, idx, cpus, mem, created_at, image, expires_at, keep
 
 func (s *Store) Get(name string) (VM, error) {
 	return scanVM(s.db.QueryRow("SELECT "+vmCols+" FROM vms WHERE name = ?", name))
+}
+
+// ByIndex is the VM with the address of index i.
+func (s *Store) ByIndex(i int) (VM, error) {
+	return scanVM(s.db.QueryRow("SELECT "+vmCols+" FROM vms WHERE idx = ?", i))
 }
 
 // List returns the VMs of owner, or all of them when owner is empty.
@@ -273,4 +311,60 @@ func (s *Store) LogoutAt(email string) (int64, error) {
 func (s *Store) Dump(path string) error {
 	_, err := s.db.Exec("VACUUM INTO ?", path)
 	return err
+}
+
+// LLMKeys are user's API keys, by provider.
+func (s *Store) LLMKeys(user string) (map[string]string, error) {
+	rows, err := s.db.Query("SELECT provider, key FROM llm_keys WHERE user = ?", user)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := map[string]string{}
+	for rows.Next() {
+		var p, k string
+		if err := rows.Scan(&p, &k); err != nil {
+			return nil, err
+		}
+		keys[p] = k
+	}
+	return keys, rows.Err()
+}
+
+func (s *Store) SetLLMKey(user, provider, key string) error {
+	_, err := s.db.Exec(`INSERT INTO llm_keys (user, provider, key, updated_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT(user, provider) DO UPDATE SET key = excluded.key, updated_at = excluded.updated_at`,
+		user, provider, key, time.Now().UTC().Format(time.RFC3339))
+	return err
+}
+
+func (s *Store) DeleteLLMKey(user, provider string) error {
+	_, err := s.db.Exec("DELETE FROM llm_keys WHERE user = ? AND provider = ?", user, provider)
+	return err
+}
+
+func (s *Store) AddLLMUsage(at time.Time, user, vm, provider string, u llmUsage, cost *float64) error {
+	_, err := s.db.Exec(`INSERT INTO llm_usage (at, user, vm, provider, model, input, output, cache_read, cache_write, cost)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, at.Unix(), user, vm, provider, u.Model, u.Input, u.Output, u.CacheRead, u.CacheWrite, cost)
+	return err
+}
+
+// LLMUsage is what user's VMs used since a time, per VM and model.
+func (s *Store) LLMUsage(user string, since time.Time) ([]llmUsageJSON, error) {
+	rows, err := s.db.Query(`SELECT vm, provider, model, COUNT(*), SUM(input), SUM(output), SUM(cache_read), SUM(cache_write),
+		CASE WHEN COUNT(cost) = COUNT(*) THEN SUM(cost) END
+		FROM llm_usage WHERE user = ? AND at >= ? GROUP BY vm, provider, model`, user, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []llmUsageJSON
+	for rows.Next() {
+		var u llmUsageJSON
+		if err := rows.Scan(&u.VM, &u.Provider, &u.Model, &u.Requests, &u.Input, &u.Output, &u.CacheRead, &u.CacheWrite, &u.CostUSD); err != nil {
+			return nil, err
+		}
+		list = append(list, u)
+	}
+	return list, rows.Err()
 }

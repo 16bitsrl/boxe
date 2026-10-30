@@ -70,7 +70,7 @@ before you trust it with anything.
   `boxed` logs users in with OIDC, gives every VM host its own session cookie,
   and proxies to the VM with the user's email in `X-Box-Email`.
 - **Network**: VMs reach the internet only. They cannot reach each other, the
-  host, private networks, the tailnet or cloud metadata. Each tap may only
+  host (but for the LLM gateway), private networks, the tailnet or cloud metadata. Each tap may only
   send with its own MAC and IP.
 - **Sleep**: with `-sleep-after`, a VM nobody uses (no SSH or web connection,
   little CPU and network) goes to sleep: Cloud Hypervisor saves its memory to
@@ -83,11 +83,24 @@ before you trust it with anything.
   memory together, and restores the copy from them. `boxe-agent` in the copy
   (over vsock) then applies the copy's own name, keys, MAC and IP address.
 - **Agent**: every VM has [Shelley](https://github.com/boldsoftware/shelley)
-  at `https://<vm>--agent.<domain>`, for its owner only. There is no shared
-  LLM account: each member adds their own models and API keys in Shelley,
-  and they stay in the VM (and in its copies). `--agent <prompt>`, last on
-  the line of `new`, `cp` or `fork`, starts a conversation in the new VM and
-  prints its link; typically you set up one VM with your keys and copy it.
+  at `https://<vm>--agent.<domain>`, for its owner only. It uses the API keys
+  of its owner's account (below), or models and keys added in Shelley itself.
+  `--agent <prompt>`, last on the line of `new`, `cp` or `fork`, starts a
+  conversation in the new VM and prints its link.
+- **LLM gateway**: each member saves their own Anthropic and OpenAI API keys
+  once, with `ssh boxe llm set anthropic`, and all their VMs use them. The
+  keys stay on the host: VMs call the gateway (`-llm-gateway`, on the bridge
+  address), which knows the VM by its address, puts the owner's key in the
+  request and counts the tokens of the answer, streams included. Login shells
+  in the VM get `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` and a placeholder
+  `*_API_KEY`, so SDKs, Claude Code and Codex work as they are; Shelley is
+  set up for it too. A request with a key of its own passes through as it is
+  (and is counted). For streamed Chat Completions the gateway asks OpenAI for
+  the final chunk with the tokens (`stream_options.include_usage`), unless
+  the request says otherwise. `ssh boxe llm usage` shows tokens and estimated cost per
+  VM and model; members never see each other's keys or usage. There is no
+  shared team key and no limit on spending: each member pays their own
+  provider bill.
 - **Desktop**: every VM has a desktop with Google Chrome at
   `https://<vm>--desktop.<domain>` (KasmVNC), for its owner only. It starts on
   first use. Agents in the VM use it with `DISPLAY=:1`, for example to try a
@@ -125,6 +138,10 @@ ssh boxe keep-awake <name> on|off          never put this VM to sleep
 ssh boxe share <name> [port]               a link to the VM for anyone (port 8000)
 ssh boxe unshare <name>                    make the VM's links stop working
 ssh boxe images                            images to start a VM from
+ssh boxe llm                               your API keys for the models (all your VMs use them)
+ssh -t boxe llm set <anthropic|openai>     add or change a key: it is asked for, without showing it
+ssh boxe llm rm <anthropic|openai>         remove a key
+ssh boxe llm usage [--days 30]             tokens and estimated cost of your VMs, per model
 ssh boxe whoami                            your GitHub username, as boxe knows you
 ssh boxe ssh-config                        config for ~/.ssh/config
 ssh boxe known-hosts                       line for ~/.ssh/known_hosts
@@ -147,6 +164,12 @@ when the prompt has characters your shell would read, like an apostrophe.
 without `ssh boxe`, with history and tab completion of commands and of your
 VM names. `exit` or ctrl-d leaves it. From a script, `ssh boxe` prints the
 help instead.
+
+`ssh -t boxe llm set anthropic` asks for the key without showing it (without
+`-t` your terminal shows what you paste);
+`ssh boxe llm set anthropic < key.txt` reads it from a file. boxe checks it
+with the provider before saving it. Costs are estimated from list prices
+known to boxe (`?` for other models): the provider's bill is what counts.
 
 Once per computer: `ssh boxe ssh-config >> ~/.ssh/config` and
 `ssh boxe known-hosts >> ~/.ssh/known_hosts`.
@@ -192,6 +215,12 @@ Once per computer: `ssh boxe ssh-config >> ~/.ssh/config` and
   - Web sessions end 12 hours after the login at the identity provider.
     `/logout` ends them on every VM at once, and `boxed -revoke <email>`
     does it for someone else.
+- **API keys stay on the host.** A VM can use its owner's keys through the
+  gateway, but cannot read them, and cannot use anyone else's: the gateway
+  takes the VM from the request's source address, which the bridge filter
+  keeps each VM from forging. Keys are in boxed's database, readable by root
+  only, and in its backups. Whoever has a shell in a VM can spend its
+  owner's keys, as with a key saved in the VM.
 - **Copies and backups are crash-consistent**, like a disk after a power cut.
 - **Not covered:** the identity provider and the TLS proxy are yours to
   secure. A hypervisor escape would still reach the host as the unprivileged

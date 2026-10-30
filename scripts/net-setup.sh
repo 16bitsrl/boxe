@@ -10,6 +10,7 @@ SUBNET=${BOXE_SUBNET:-10.42.0.0/16}
 GATEWAY=${BOXE_GATEWAY:-10.42.0.1/16}
 PROXY=${BOXE_PROXY:-}   # the only remote client of boxed's web port (the TLS proxy); empty: local only
 WEB_PORT=${BOXE_WEB_PORT:-8080}
+LLM_PORT=${BOXE_LLM_PORT:-2998} # boxed's LLM gateway, the one port of the host VMs reach
 PRIVATE=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16
 
 ip link show br0 >/dev/null 2>&1 || ip link add br0 type bridge
@@ -68,9 +69,10 @@ COMMIT
 # Docker sets FORWARD to DROP: VMs going out are accepted from DOCKER-USER.
 -A BOXE-DOCKER -i br0 -j ACCEPT
 -A BOXE-DOCKER -o br0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-# The host itself: VMs only get answers to what the host opened, and boxed's
-# web port only takes connections from the proxy.
+# The host itself: VMs only get answers to what the host opened and the LLM
+# gateway, and boxed's web port only takes connections from the proxy.
 -A BOXE-INPUT -i br0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A BOXE-INPUT -i br0 -p tcp -d ${GATEWAY%/*} --dport $LLM_PORT -j ACCEPT
 -A BOXE-INPUT -i br0 -j DROP
 -A BOXE-INPUT -p tcp --dport $WEB_PORT -i lo -j ACCEPT
 $proxy_rule

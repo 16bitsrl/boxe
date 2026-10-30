@@ -10,7 +10,7 @@ import (
 
 // commands are what tab completes first at the prompt.
 var commands = []string{"new", "ls", "rm", "cp", "fork", "ttl", "restart", "sleep", "wake", "keep-awake",
-	"share", "unshare", "images", "ssh-config", "known-hosts", "whoami", "help", "exit"}
+	"share", "unshare", "images", "llm", "ssh-config", "known-hosts", "whoami", "help", "exit"}
 
 // prompt is `ssh boxe` from a terminal: one command after another, with
 // history and tab completion, until exit or ctrl-d.
@@ -40,7 +40,7 @@ func (b *Box) prompt(s ssh.Session, user string, size ssh.Window, resized <-chan
 		case "exit", "quit":
 			return
 		}
-		if err := b.run(t, user, line, ""); err != nil {
+		if err := b.run(t, t.ReadPassword, user, line, ""); err != nil {
 			fmt.Fprintln(t, "error:", err)
 		}
 	}

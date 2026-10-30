@@ -20,6 +20,7 @@ import (
 	"github.com/anmitsu/go-shlex"
 	"github.com/gliderlabs/ssh"
 	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 )
 
 type ctxKey string
@@ -45,6 +46,8 @@ type Box struct {
 	sleepAfter time.Duration // an unused VM goes to sleep after this long; 0: never
 	actMu      sync.Mutex
 	act        map[string]*activity // running VMs: how they are used (sleep.go)
+
+	llm *Gateway // nil: no LLM gateway
 }
 
 const keyKey ctxKey = "boxe-key"
@@ -163,6 +166,9 @@ func (b *Box) help(cmd string) string {
   SSH share <name> [port]               a link that shows the VM (port 8000) to anyone who has it
   SSH unshare <name>                    make the VM's links stop working
   SSH images                            the images new VMs can start from
+  SSH llm                               your API keys for the models, used by all your VMs
+  SSH -t llm set <anthropic|openai>     add or change a key (asked for, hidden with -t)
+  SSH llm usage [--days 30]             tokens and cost of your VMs, per model
   SSH ssh-config                        config for ~/.ssh/config
   SSH known-hosts                       line for ~/.ssh/known_hosts
   SSH whoami
@@ -185,7 +191,14 @@ func (b *Box) session(s ssh.Session) {
 		s.Exit(0)
 		return
 	}
-	if err := b.run(s, user, s.RawCommand(), "ssh "+b.name+" "); err != nil {
+	ask := func(prompt string) (string, error) {
+		if _, _, isPty := s.Pty(); isPty {
+			return term.NewTerminal(s, "").ReadPassword(prompt)
+		}
+		fmt.Fprint(s.Stderr(), prompt)
+		return readLine(s)
+	}
+	if err := b.run(s, ask, user, s.RawCommand(), "ssh "+b.name+" "); err != nil {
 		fmt.Fprintln(s.Stderr(), "error:", err)
 		s.Exit(1)
 		return
@@ -194,8 +207,8 @@ func (b *Box) session(s ssh.Session) {
 }
 
 // run is one command line, as typed after `ssh boxe` or at the prompt;
-// cmd is how the help writes a command there.
-func (b *Box) run(w io.Writer, user, line, cmd string) error {
+// cmd is how the help writes a command there. ask reads a secret.
+func (b *Box) run(w io.Writer, ask func(prompt string) (string, error), user, line, cmd string) error {
 	raw, agent, hasAgent := cutAgent(line)
 	words, _ := shlex.Split(raw, true)
 	args, asJSON := cutFlag(words, "--json")
@@ -238,6 +251,8 @@ func (b *Box) run(w io.Writer, user, line, cmd string) error {
 		err = b.cmdUnshare(o, user, args[1:])
 	case args[0] == "images":
 		err = b.cmdImages(o)
+	case args[0] == "llm":
+		err = b.cmdLLM(o, ask, user, args[1:])
 	case args[0] == "ssh-config":
 		fmt.Fprintf(w, "Host *.%s\n  User exedev\n  ProxyJump %s\n", b.hv.SSHSuffix, b.name)
 	case args[0] == "known-hosts":
