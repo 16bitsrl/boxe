@@ -3,6 +3,7 @@
 # After the username, the member's email at the identity provider: only then
 # can they use the agent of their VMs on the web (https://<vm>--agent...) and
 # see them in the panel. "admin" after the email: the panel shows them every
-# VM, and lets them restart or delete any.
+# VM and the host page, and lets them open the console of, restart or delete
+# any VM.
 octocat octocat@example.com admin
 hubot hubot@example.com

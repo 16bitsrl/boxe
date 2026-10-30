@@ -1,14 +1,26 @@
-# boxe 🥊
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="site/assets/logo-reverse.svg">
+    <img src="site/assets/logo.svg" alt="boxe" height="56">
+  </picture>
+</h1>
 
-Your team's own [exe.dev](https://exe.dev): disposable Linux microVMs that
-start in about a second, managed over SSH, with HTTPS and team login in front
-of them. One Go daemon (`boxed`) on one Linux host with KVM and ZFS.
+**Start with one box. Raise it.**
+
+Tiny Linux microVMs that start in about a second, on a host you own. Create
+one over SSH; it gets its own HTTPS address behind your team's login. boxe is
+a self-hosted take on [exe.dev](https://exe.dev): one Go daemon (`boxed`) on
+one Linux host with KVM and ZFS.
+
+[boxe.dev](https://boxe.dev) · [Install](#install) · [Security model](#security-model)
 
 ```
 $ ssh boxe new
 quick-fox ready in 0.8 s
 
   ssh quick-fox.boxe
+
+  IP 10.42.0.17, 2 CPU, 2G RAM
 
 $ ssh quick-fox.boxe          # a full Ubuntu VM: sudo, Docker, persistent disk
 $ open https://quick-fox.boxe.example.com          # port 8000, behind team login
@@ -113,12 +125,15 @@ ssh boxe keep-awake <name> on|off          never put this VM to sleep
 ssh boxe share <name> [port]               a link to the VM for anyone (port 8000)
 ssh boxe unshare <name>                    make the VM's links stop working
 ssh boxe images                            images to start a VM from
+ssh boxe whoami                            your GitHub username, as boxe knows you
 ssh boxe ssh-config                        config for ~/.ssh/config
 ssh boxe known-hosts                       line for ~/.ssh/known_hosts
 ```
 
-Add `--json` to any command for output a program can read: `ls` prints a
-list of VMs, `new` and `cp` the new VM, errors `{"error": "..."}`.
+Add `--json` to a VM command for output a program can read: `ls` and
+`images` print a list, `new`, `cp`, `fork`, `ttl` and `keep-awake` the VM,
+`share` the link, the others the VM's name and new status, and errors
+`{"error": "..."}`.
 
 `ls` shows what each VM uses: CPU over the last minute (100% is one core),
 the RAM it takes on the host (the memory the VM has touched, which grows up
@@ -157,10 +172,10 @@ Once per computer: `ssh boxe ssh-config >> ~/.ssh/config` and
   cannot be shared.
 - **The panel's actions come only from the panel.** VM pages are on the
   same site as `https://<domain>`, so the browser sends them the panel's
-  cookie too. Restarting or deleting a VM is a POST that boxed accepts only
-  from the panel's own origin and with a token bound to the session, which
-  VM pages cannot read; the owner, or an admin, must type the VM's name to
-  delete it.
+  cookie too. Creating, copying, restarting or deleting a VM is a POST that
+  boxed accepts only from the panel's own origin and with a token bound to
+  the session, which VM pages cannot read; the owner, or an admin, must type
+  the VM's name to delete it.
 - **VMs are untrusted.**
   - Each runs in its own Cloud Hypervisor process. The process runs as an
     unprivileged user with no capabilities, can open only its own disks,
@@ -218,12 +233,18 @@ C8i/M8i/R8i).
      another machine.
    - Generate a key pair for the host to reach VMs:
      `ssh-keygen -t ed25519 -N '' -f /etc/boxe/id_ed25519`.
-   - List the team in `/etc/boxe/users` (see `scripts/users.example`).
+   - List the team in `/etc/boxe/users` (see `scripts/users.example`): a
+     GitHub username per line, then the member's email at the identity
+     provider (without it they get no panel, agent or desktop), then
+     `admin` for an admin.
    - Install `boxe-net.service` and `boxed.service` from `scripts/` in
      `/etc/systemd/system`, then `systemctl enable --now boxe-net` and
      `systemctl enable boxed` (it starts at the first deploy).
 6. **Settings:** `/etc/boxe/boxed.env` (see `scripts/boxed.env.example` and
    `boxed -help`).
+   - **Image:** `-base boxe/images/boxeuntu-<date>@base`, the image of step 4.
+   - **Sleep and fork** are off until you set `-sleep-dir /boxe/sleep`;
+     add `-sleep-after 30m` to put unused VMs to sleep.
    - **SSH:** `boxed` joins your [Tailscale](https://tailscale.com) tailnet
      by itself as the node `boxe` (`-ts-hostname`), so `ssh boxe` and
      `ssh <vm>.boxe` work from every device on it. Put an auth key in
@@ -232,7 +253,8 @@ C8i/M8i/R8i).
      Without Tailscale, set `-ts-hostname= -listen :2222` and give members
      a `Host boxe` entry with the host's address and `Port 2222` in
      `~/.ssh/config`.
-   - **Web:** an OIDC client in `/etc/boxe/oidc` (`OIDC_CLIENT_ID=`,
+   - **Web:** `-domain <domain>` and `-oidc-issuer <issuer URL>`, and an
+     OIDC client in `/etc/boxe/oidc` (`OIDC_CLIENT_ID=`,
      `OIDC_CLIENT_SECRET=`), with redirect URI
      `https://<domain>/oauth/callback`. Any OIDC provider works with
      `-oidc-email-domains` (verified emails in those domains get in); with
@@ -307,5 +329,6 @@ C8i/M8i/R8i).
 ## License
 
 Apache License 2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). The base
-image builds on exeuntu by Bold Software (exe.dev), also under the Apache
-License 2.0.
+image builds on exeuntu by Bold Software (exe.dev) and ships their Shelley,
+both also under the Apache License 2.0. It installs KasmVNC, under the GNU
+GPL 2.0: whoever distributes a built image must also offer its source.
