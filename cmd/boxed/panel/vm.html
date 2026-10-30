@@ -8,6 +8,7 @@
   <div class="cmd"><code><b>$</b> ssh {{.VM.SSH}}</code><button class="copy" data-copy="ssh {{.VM.SSH}}" hidden>Copy</button></div>
   <div class="links">
     {{range .Links}}<a class="button" href="{{.URL}}" target="_blank" rel="noopener">{{.Label}}</a>{{end}}
+    {{if .Manage}}<a class="button" href="/vm/{{.VM.Name}}/console">Console</a>{{end}}
   </div>
   <div class="cols">
     <dl class="facts">

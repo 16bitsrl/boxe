@@ -1,0 +1,12 @@
+{{define "content"}}
+<nav class="crumbs"><a href="/">{{if .Admin}}All VMs{{else}}Your VMs{{end}}</a> <span>/</span> <a href="/vm/{{.VM.Name}}">{{.VM.Name}}</a> <span>/</span> Console</nav>
+<div class="heading">
+  <h1>Console</h1>
+  <a class="button" href="/vm/{{.VM.Name}}/console">Reload</a>
+</div>
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>
+{{else if .Console}}<pre class="console" tabindex="0">{{.Console}}</pre>
+<p class="hint">The last 200 lines {{.VM.Name}} printed while it booted, ran and shut down, oldest first.</p>
+{{else}}<div class="card"><p>Nothing yet.</p></div>
+{{end}}
+{{end}}

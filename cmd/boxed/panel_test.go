@@ -592,3 +592,35 @@ func TestPanelCopyVM(t *testing.T) {
 		t.Errorf("the admin copied alice's VM: %d", res.StatusCode)
 	}
 }
+
+// The owner and an admin read what a VM printed on its console, since it
+// was made: not what a deleted VM with the same name printed.
+func TestPanelConsole(t *testing.T) {
+	pt := newPanelTest(t)
+	pt.c.host.journal = map[string]string{unit("test"): "[    0.000000] Linux version 7.2.8-boxe\n[\x1b[0;32m  OK  \x1b[0m] Started \x1b[0;1;39mssh.service\x1b[0m\x07\ntest login: <me>\n"}
+	b := pt.browser("member")
+	if _, page := b.page("/vm/test"); !strings.Contains(page, `href="/vm/test/console"`) {
+		t.Errorf("no link to the console:\n%s", page)
+	}
+	code, page := b.page("/vm/test/console")
+	if code != 200 || !strings.Contains(page, "Linux version 7.2.8-boxe") || !strings.Contains(page, "test login: &lt;me&gt;") ||
+		!strings.Contains(page, "[  OK  ] Started ssh.service\n") { // no terminal colors
+		t.Fatalf("%d:\n%s", code, page)
+	}
+	v, _ := pt.c.box.store.Get("test")
+	if !pt.c.host.ran(fmt.Sprintf("journalctl _SYSTEMD_UNIT=boxe-vm-test.service --since @%d", v.Created.Unix())) {
+		t.Errorf("journalctl: %v", pt.c.host.cmds)
+	}
+	if code, page := pt.browser("admin").page("/vm/test/console"); code != 200 || !strings.Contains(page, "Linux version") {
+		t.Errorf("admin: %d", code)
+	}
+	if code, page := pt.browser("bob").page("/vm/test/console"); code != 404 || strings.Contains(page, "Linux version") {
+		t.Errorf("bob: %d", code)
+	}
+	if code, _ := b.page("/vm/test/other"); code != 404 {
+		t.Errorf("/vm/test/other: %d", code)
+	}
+	if _, page := b.page("/vm/nap/console"); !strings.Contains(page, "Nothing yet") {
+		t.Errorf("empty console:\n%s", page)
+	}
+}

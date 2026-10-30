@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -231,6 +232,21 @@ func (h *Hypervisor) StartAgent(v VM, prompt string) (string, error) {
 	}
 	return r.Slug, nil
 }
+
+// Console is the last lines v printed on its serial console (see start),
+// since it was made: the journal keeps those of an older VM of that name.
+func (h *Hypervisor) Console(v VM, lines int) (string, error) {
+	out, err := h.exec(10*time.Second, "journalctl", "_SYSTEMD_UNIT="+unit(v.Name)+".service",
+		"--since", fmt.Sprintf("@%d", v.Created.Unix()), "-n", strconv.Itoa(lines), "-o", "cat", "-q", "--no-pager")
+	return plainText(string(out)), err
+}
+
+// terminalCodes are what a terminal reads as colors and cursor moves, and
+// the other control characters but tab and newline.
+var terminalCodes = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]|[\x00-\x08\x0b-\x1f\x7f]`)
+
+// plainText is what a VM printed, without the codes for a terminal.
+func plainText(s string) string { return terminalCodes.ReplaceAllString(s, "") }
 
 // FreeSpace is what the VM dataset's pool has left, in bytes.
 func (h *Hypervisor) FreeSpace() (int64, error) {

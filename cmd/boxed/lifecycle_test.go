@@ -38,6 +38,7 @@ type fakeHost struct {
 	mem       map[string]int64  // unit -> RAM it takes, in bytes
 	disk      string            // zfs list of the VM disks: name, referenced
 	onSSH     func()            // runs once, when something next waits for a VM's sshd
+	journal   map[string]string // unit -> what its process printed, as journalctl shows it
 }
 
 // dial connects to a VM: every sshd answers at once, and boxe-agent behind
@@ -96,6 +97,12 @@ func (f *fakeHost) exec(_ time.Duration, name string, args ...string) ([]byte, e
 		}
 	}
 	switch {
+	case name == "journalctl":
+		for _, a := range args {
+			if u, ok := strings.CutPrefix(a, "_SYSTEMD_UNIT="); ok {
+				return []byte(f.journal[strings.TrimSuffix(u, ".service")]), nil
+			}
+		}
 	case strings.HasPrefix(cmd, "systemctl is-active"):
 		if f.running[args[len(args)-1]] {
 			return []byte("active\n"), nil

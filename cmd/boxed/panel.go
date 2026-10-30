@@ -58,7 +58,7 @@ var panelPages = func() map[string]*template.Template {
 	}
 	layout := template.Must(template.New("").Funcs(funcs).ParseFS(panelFiles, "panel/layout.html"))
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"vms", "vm", "new", "me", "host", "message"} {
+	for _, name := range []string{"vms", "vm", "console", "new", "me", "host", "message"} {
 		pages[name] = template.Must(template.Must(layout.Clone()).ParseFS(panelFiles, "panel/"+name+".html"))
 	}
 	return pages
@@ -84,6 +84,13 @@ func (b *Box) panel(w *Web) {
 	w.host = b.hostInfo
 	w.samples = b.store.Samples
 	w.images = b.hv.Images
+	w.console = func(name string) (string, error) {
+		v, err := b.store.Get(name)
+		if err != nil {
+			return "", err
+		}
+		return b.hv.Console(v, consoleLines)
+	}
 	w.create = func(user string, n newVM, from string) (vmJSON, error) {
 		var out bytes.Buffer
 		o := output{w: &out, json: true}
@@ -138,6 +145,7 @@ type panelPage struct {
 	Owns    bool        // VM is theirs
 	Form    newVM       // as typed in the form of a new VM
 	Images  []image     // to make it from
+	Console string      // what VM printed lately
 	Keys    []string
 	Message string
 	Logout  bool      // the message offers to log out
@@ -224,7 +232,14 @@ func (w *Web) servePanel(rw http.ResponseWriter, r *http.Request) {
 		p.Title, p.Nav, p.Host = "Host", "host", w.host()
 		w.render(rw, http.StatusOK, "host", p)
 	case strings.HasPrefix(path, "/vm/"):
-		w.vmDetail(rw, p, strings.TrimPrefix(path, "/vm/"), r.URL.Query().Get("range"))
+		switch name, sub, _ := strings.Cut(strings.TrimPrefix(path, "/vm/"), "/"); sub {
+		case "":
+			w.vmDetail(rw, p, name, r.URL.Query().Get("range"))
+		case "console":
+			w.consolePage(rw, p, name)
+		default:
+			w.notFound(rw, p)
+		}
 	default:
 		w.notFound(rw, p)
 	}
@@ -318,6 +333,25 @@ func (w *Web) vmPage(rw http.ResponseWriter, status int, p panelPage, v vmJSON, 
 	}
 	p.Manage = v.Owner == p.User || p.Admin
 	w.render(rw, status, "vm", p)
+}
+
+// consoleLines is how much of a VM's console the panel shows.
+const consoleLines = 200
+
+// consolePage shows what the VM name printed lately, to whoever may manage
+// it: what they see is what they manage (see visible).
+func (w *Web) consolePage(rw http.ResponseWriter, p panelPage, name string) {
+	v, ok := w.find(rw, p, name)
+	if !ok {
+		return
+	}
+	p.Title, p.Nav, p.VM = v.Name+" console", "vms", v
+	var err error
+	if p.Console, err = w.console(v.Name); err != nil {
+		log.Printf("web: panel: console of %s: %v", v.Name, err)
+		p.Error = "The console could not be read, try again."
+	}
+	w.render(rw, http.StatusOK, "console", p)
 }
 
 // newPage is the form of a new VM, filled with n.

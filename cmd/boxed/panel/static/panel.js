@@ -67,3 +67,6 @@ for (const group of document.querySelectorAll(".charts")) {
     });
   }
 }
+
+// The console opens at its end, where the latest lines are.
+for (const pre of document.querySelectorAll("pre.console")) pre.scrollTop = pre.scrollHeight;

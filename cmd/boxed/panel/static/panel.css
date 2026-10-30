@@ -158,6 +158,8 @@ button.danger:hover { background: #9c271f; }
 .chart.reading figcaption span { visibility: hidden; }
 .plot .tip b { font-weight: 700; margin-right: 6px; }
 .chart .axis { display: flex; justify-content: space-between; margin-top: 4px; font: 11px/1.4 var(--mono); color: var(--muted); }
+pre.console { margin: 0; max-height: 70vh; overflow: auto; padding: 16px 18px; background: var(--ink); color: var(--paper); font: 13px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+pre.console:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
 .keys { list-style: none; padding: 0; margin: 10px 0 0; }
 .keys li { padding: 6px 0; border-top: 1px solid var(--rule); overflow-wrap: anywhere; }
 

@@ -52,6 +52,7 @@ type Web struct {
 	samples         func(vm string, since time.Time) ([]Sample, error)
 	create          func(user string, n newVM, from string) (vmJSON, error) // a new VM, or a copy of from
 	images          func() ([]image, error)
+	console         func(vm string) (string, error) // what it printed lately
 
 	mu  sync.Mutex
 	idp struct{ Auth, Token, Userinfo string } // from discovery, on first use
