@@ -570,7 +570,7 @@ func TestPublicAddresses(t *testing.T) {
 	for ip, want := range map[string]bool{
 		"93.184.215.14": true, "2606:4700::1111": true,
 		"203.0.113.7": false, "::ffff:203.0.113.7": false,
-		"10.42.0.1": false, "192.168.1.1": false, "100.89.255.112": false, "127.0.0.1": false,
+		"10.42.0.1": false, "192.168.1.1": false, "100.64.0.7": false, "127.0.0.1": false,
 		"169.254.169.254": false, "::1": false, "fd00::1": false, "0.0.0.0": false,
 	} {
 		if got := public(netip.MustParseAddr(ip), []netip.Addr{own}); got != want {
