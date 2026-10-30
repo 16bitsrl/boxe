@@ -112,10 +112,11 @@ h3 { font-size: var(--s-body); font-weight: 700; line-height: 1.3; }
   width: var(--n);
   height: var(--n);
   background: var(--red);
-  transform: translate(-30%, 30%);
-  transition: transform .25s var(--ease);
+  transition: transform .3s cubic-bezier(.3, 1.6, .5, 1);
 }
-.btn:hover::after, .btn:focus-visible::after { transform: translate(0, 0); }
+/* On hover the square leaves its notch, like the one in the logo. */
+.btn:hover::after, .btn:focus-visible::after { transform: translate(80%, -80%); }
+@media (prefers-reduced-motion: reduce) { .btn::after { transition: none; } }
 .btn:hover::before { background: #000; }
 .btn:active { transform: translateY(1px); }
 .btn-small { --n: 9px; min-height: 40px; padding: 0 calc(14px + var(--n)) 0 14px; font-size: 15px; }
