@@ -88,12 +88,14 @@ before you trust it with anything.
   `ssh boxe images` lists them and `ssh boxe new --image laravel` starts
   from the newest version.
 - **Panel**: `https://<domain>`, behind team login, lists your VMs (all of
-  them for an admin) with their links and usage, and shows your account: the
-  SSH keys boxe lets in, how to set up SSH, and logging out everywhere. The
-  owner of a VM, and an admin, can restart it or delete it there (typing its
-  name); everything else is done over SSH. Admins also get a page about the
-  host: what `/healthz` would complain about, CPU, RAM and disk, the team
-  with their keys and VMs, and the last backup run.
+  them for an admin) with their links and usage, charts of their CPU, RAM
+  and disk over 24 hours, 7 or 30 days, and shows your account: the SSH keys
+  boxe lets in, how to set up SSH, and logging out everywhere. Members make
+  new VMs there and copy theirs. The owner of a VM, and an admin, can read
+  its console, restart it or delete it (typing its name); everything else is
+  done over SSH. Admins also get a page about the host: what `/healthz`
+  would complain about, CPU, RAM and disk, the team with their keys and VMs,
+  and the last backup run.
 
 ## Commands
 
