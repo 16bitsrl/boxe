@@ -1,7 +1,10 @@
 {{define "content"}}
 <div class="heading">
   <h1>{{if .Admin}}All VMs{{else}}Your VMs{{end}}</h1>
-  <div class="cmd"><code><b>$</b> ssh {{.SSH}} new</code><button class="copy" data-copy="ssh {{.SSH}} new" hidden>Copy</button></div>
+  <div class="heading-actions">
+    <div class="cmd"><code><b>$</b> ssh {{.SSH}} new</code><button class="copy" data-copy="ssh {{.SSH}} new" hidden>Copy</button></div>
+    {{if .User}}<a class="button primary" href="/new">New VM</a>{{end}}
+  </div>
 </div>
 {{if not .User}}
 <div class="card note">
@@ -10,7 +13,7 @@
 </div>
 {{else if not .VMs}}
 <div class="card empty">
-  <p>You have no VMs yet. Create one in about a second:</p>
+  <p>You have no VMs yet. Create one in about a second, <a href="/new">here</a> or with:</p>
   <p><code>ssh {{.SSH}} new</code></p>
 </div>
 {{else}}

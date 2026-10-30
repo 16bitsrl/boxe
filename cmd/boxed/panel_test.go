@@ -3,9 +3,9 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
-	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -492,5 +492,103 @@ func TestPanelUsageCharts(t *testing.T) {
 	}
 	if _, page := member.page("/vm/nap"); !strings.Contains(page, "Nothing recorded yet") || strings.Contains(page, `class="line"`) {
 		t.Errorf("a VM without samples:\n%s", page)
+	}
+}
+
+// A member makes a VM from the panel, as with ssh boxe new: a name or a
+// random one, an image, its size, and maybe a first task for its agent.
+func TestPanelNewVM(t *testing.T) {
+	pt := newPanelTest(t)
+	pt.c.box.hv.BaseSnapshot = "boxe/images/boxeuntu-20261029@base"
+	pt.c.host.images = []string{"boxe/images/boxeuntu-20261029@base", "boxe/images/laravel-20261031-2@base"}
+	b := pt.browser("member")
+	if _, page := b.page("/"); !strings.Contains(page, `href="/new"`) {
+		t.Errorf("no way to a new VM in the list:\n%s", page)
+	}
+	code, page := b.page("/new")
+	if code != 200 {
+		t.Fatalf("%d:\n%s", code, page)
+	}
+	for _, want := range []string{`action="/new"`, `name="name"`, `<option value="laravel">`, `name="cpu"`, `name="mem"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("no %q in:\n%s", want, page)
+		}
+	}
+	token := csrf(t, page)
+
+	res := b.post("/new", url.Values{"csrf": {token}, "name": {"web"}, "image": {"laravel"}, "cpu": {"4"}, "mem": {"4G"}}, fromPanel)
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/vm/web" {
+		t.Fatalf("new: %d %q\n%s", res.StatusCode, res.Header.Get("Location"), body(res))
+	}
+	if v, err := pt.c.box.store.Get("web"); err != nil || v.Owner != "alice" || v.CPUs != 4 || v.Mem != "4G" || !strings.Contains(v.Image, "laravel-20261031-2") {
+		t.Errorf("web: %+v %v", v, err)
+	}
+
+	res = b.post("/new", url.Values{"csrf": {token}, "cpu": {"2"}, "mem": {"2G"}}, fromPanel)
+	if loc := res.Header.Get("Location"); res.StatusCode != http.StatusSeeOther || !strings.HasPrefix(loc, "/vm/") || loc == "/vm/" {
+		t.Errorf("random name: %d %q\n%s", res.StatusCode, loc, body(res))
+	}
+
+	// Mistakes come back on the form, with what was typed.
+	for _, c := range []struct {
+		form url.Values
+		want string
+	}{
+		{url.Values{"name": {"web"}, "cpu": {"2"}, "mem": {"2G"}}, "A VM named web already exists."},
+		{url.Values{"name": {"Bad_Name"}, "cpu": {"2"}, "mem": {"2G"}}, "Invalid name"},
+		{url.Values{"name": {"big"}, "cpu": {"64"}, "mem": {"2G"}}, "between 1 and 8"},
+		{url.Values{"name": {"odd"}, "image": {"nope"}, "cpu": {"2"}, "mem": {"2G"}}, "No image named"},
+	} {
+		c.form.Set("csrf", token)
+		res := b.post("/new", c.form, fromPanel)
+		page := body(res)
+		if res.StatusCode != http.StatusBadRequest || !strings.Contains(page, c.want) || !strings.Contains(page, `value="`+c.form.Get("name")+`"`) {
+			t.Errorf("%v: %d\n%s", c.form, res.StatusCode, page)
+		}
+	}
+
+	// Only from the panel, in this session.
+	fromVM := http.Header{"Sec-Fetch-Site": {"same-site"}, "Origin": {"https://test.boxe.example"}}
+	if res := b.post("/new", url.Values{"csrf": {token}, "name": {"evil"}, "cpu": {"2"}, "mem": {"2G"}}, fromVM); res.StatusCode != http.StatusForbidden || pt.exists("evil") {
+		t.Errorf("from a VM: %d", res.StatusCode)
+	}
+	if res := b.post("/new", url.Values{"name": {"evil"}, "cpu": {"2"}, "mem": {"2G"}}, fromPanel); res.StatusCode != http.StatusForbidden || pt.exists("evil") {
+		t.Errorf("no token: %d", res.StatusCode)
+	}
+
+	// Someone whose email is linked to nobody cannot make VMs.
+	stranger := pt.browser("stranger")
+	if _, page := stranger.page("/new"); strings.Contains(page, `action="/new"`) {
+		t.Errorf("a stranger gets the form:\n%s", page)
+	}
+}
+
+// The owner copies a VM from its page; nobody else can, an admin included.
+func TestPanelCopyVM(t *testing.T) {
+	pt := newPanelTest(t)
+	b := pt.browser("member")
+	_, page := b.page("/vm/test")
+	if !strings.Contains(page, `action="/vm/test/copy"`) {
+		t.Errorf("no copy form:\n%s", page)
+	}
+	res := b.post("/vm/test/copy", url.Values{"csrf": {csrf(t, page)}, "name": {"test2"}}, fromPanel)
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/vm/test2" {
+		t.Fatalf("copy: %d %q\n%s", res.StatusCode, res.Header.Get("Location"), body(res))
+	}
+	if v, err := pt.c.box.store.Get("test2"); err != nil || v.Owner != "alice" {
+		t.Errorf("test2: %+v %v", v, err)
+	}
+	res = b.post("/vm/test/copy", url.Values{"csrf": {csrf(t, page)}, "name": {"nap"}}, fromPanel)
+	if page := body(res); res.StatusCode != http.StatusBadRequest || !strings.Contains(page, "A VM named nap already exists.") || !strings.Contains(page, `value="nap"`) {
+		t.Errorf("copy onto nap: %d\n%s", res.StatusCode, page)
+	}
+
+	admin := pt.browser("admin")
+	_, page = admin.page("/vm/test")
+	if strings.Contains(page, `action="/vm/test/copy"`) {
+		t.Errorf("the admin may copy alice's VM:\n%s", page)
+	}
+	if res := admin.post("/vm/test/copy", url.Values{"csrf": {csrf(t, page)}, "name": {"stolen"}}, fromPanel); res.StatusCode == http.StatusSeeOther || pt.exists("stolen") {
+		t.Errorf("the admin copied alice's VM: %d", res.StatusCode)
 	}
 }

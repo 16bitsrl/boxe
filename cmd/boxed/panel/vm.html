@@ -60,6 +60,14 @@
   {{if .Manage}}
   <h2>Manage</h2>
   {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  {{if .Owns}}
+  <form class="manage" method="post" action="/vm/{{.VM.Name}}/copy">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <p><b>Copy</b> Makes a new VM with a copy of this one's disk.</p>
+    <label>Name <input name="name" value="{{.Form.Name}}" placeholder="random" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32"></label>
+    <button>Copy</button>
+  </form>
+  {{end}}
   <form class="manage" method="post" action="/vm/{{.VM.Name}}/restart">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <p><b>Restart</b> Shuts the VM down and boots it again, for when it is stuck.</p>

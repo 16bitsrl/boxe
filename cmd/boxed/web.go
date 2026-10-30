@@ -50,6 +50,8 @@ type Web struct {
 	restart, remove func(user string, admin bool, name string) error
 	host            func() hostInfo // for admins
 	samples         func(vm string, since time.Time) ([]Sample, error)
+	create          func(user string, n newVM, from string) (vmJSON, error) // a new VM, or a copy of from
+	images          func() ([]image, error)
 
 	mu  sync.Mutex
 	idp struct{ Auth, Token, Userinfo string } // from discovery, on first use
