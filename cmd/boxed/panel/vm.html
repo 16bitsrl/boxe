@@ -65,14 +65,22 @@
   <form class="manage" method="post" action="/vm/{{.VM.Name}}/copy">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <p><b>Copy</b> Makes a new VM with a copy of this one's disk.</p>
-    <label>Name <input name="name" value="{{.Form.Name}}" placeholder="random" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32"></label>
+    <label>Name <input name="name" data-arg="" value="{{.Form.Name}}" placeholder="random" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32"></label>
     <button>Copy</button>
+    <div class="said">
+      <span>The same as</span>
+      <div class="cmd" data-cmd="ssh {{.SSH}} cp {{.VM.Name}}"><code><b>$</b> ssh {{.SSH}} {{.Cmds.cp}}</code><button class="copy" data-copy="ssh {{.SSH}} {{.Cmds.cp}}" hidden title="Copy the command">Copy</button></div>
+    </div>
   </form>
   {{end}}
   <form class="manage" method="post" action="/vm/{{.VM.Name}}/restart">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <p><b>Restart</b> Shuts the VM down and boots it again, for when it is stuck.</p>
     <button>Restart</button>
+    <div class="said">
+      <span>The same as</span>
+      <div class="cmd"><code><b>$</b> ssh {{.SSH}} {{.Cmds.restart}}</code><button class="copy" data-copy="ssh {{.SSH}} {{.Cmds.restart}}" hidden title="Copy the command">Copy</button></div>
+    </div>
   </form>
   <form class="manage" method="post" action="/vm/{{.VM.Name}}/delete">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -80,6 +88,10 @@
     <label>Type <code>{{.VM.Name}}</code> to confirm
       <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
     <button class="danger">Delete {{.VM.Name}}</button>
+    <div class="said">
+      <span>The same as</span>
+      <div class="cmd"><code><b>$</b> ssh {{.SSH}} {{.Cmds.rm}}</code><button class="copy" data-copy="ssh {{.SSH}} {{.Cmds.rm}}" hidden title="Copy the command">Copy</button></div>
+    </div>
   </form>
   {{end}}
 </div>

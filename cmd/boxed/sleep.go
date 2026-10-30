@@ -377,7 +377,7 @@ func (b *Box) wake(user, name string) error {
 	b.mu.Unlock()
 	if err != nil {
 		log.Printf("%s: wake %s: %v", v.Owner, name, err)
-		return fmt.Errorf("could not wake %s up", name)
+		return hostErrorf("could not wake %s up", name)
 	}
 	b.busy(name, 0) // it counts as used from now
 	if err := b.hv.WaitSSH(v, 10*time.Second); err != nil {
@@ -456,7 +456,7 @@ func (b *Box) cmdSleep(o output, user string, args []string) error {
 	}
 	if err := b.hv.Sleep(v); err != nil {
 		log.Printf("%s: sleep %s: %v", user, v.Name, err)
-		return fmt.Errorf("could not put %s to sleep: %v", v.Name, err)
+		return hostErrorf("could not put %s to sleep: %v", v.Name, err)
 	}
 	log.Printf("%s: put %s to sleep", user, v.Name)
 	o.print(done{v.Name, "sleeping"}, v.Name+" is asleep: it wakes up when you connect to it\n")

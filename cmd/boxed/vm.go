@@ -104,11 +104,26 @@ func (h *Hypervisor) exec(d time.Duration, name string, args ...string) ([]byte,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
-	if err != nil {
-		return out, fmt.Errorf("%s %s: %v: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	var out capped
+	c := exec.CommandContext(ctx, name, args...)
+	c.Stdout, c.Stderr = &out, &out
+	c.WaitDelay = time.Second // what it started may keep its output open
+	if err := c.Run(); err != nil {
+		return out.b, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out.b)))
 	}
-	return out, nil
+	return out.b, nil
+}
+
+// maxOutput is the most of a command's output kept: a VM's command (exec)
+// may print without end.
+const maxOutput = 16 << 20
+
+// capped keeps the first maxOutput bytes written to it.
+type capped struct{ b []byte }
+
+func (c *capped) Write(p []byte) (int, error) {
+	c.b = append(c.b, p[:min(len(p), maxOutput-len(c.b))]...)
+	return len(p), nil
 }
 
 func (h *Hypervisor) dial(network, addr string, timeout time.Duration) (net.Conn, error) {
@@ -632,7 +647,7 @@ func (h *Hypervisor) WaitSSH(v VM, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for i := 0; time.Now().Before(deadline); i++ {
 		if i%50 == 49 && !h.Running(v.Name) {
-			return fmt.Errorf("%s stopped while booting (journalctl -u %s on the host)", v.Name, unit(v.Name))
+			return hostErrorf("%s stopped while booting (journalctl -u %s on the host)", v.Name, unit(v.Name))
 		}
 		c, err := h.dial("tcp", v.IP()+":22", 300*time.Millisecond)
 		if err == nil {
@@ -645,7 +660,7 @@ func (h *Hypervisor) WaitSSH(v VM, timeout time.Duration) error {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	return fmt.Errorf("%s: no SSH after %s", v.Name, timeout)
+	return hostErrorf("%s: no SSH after %s", v.Name, timeout)
 }
 
 // Destroy stops v and deletes its disk. Copies made from v keep working:
