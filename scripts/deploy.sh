@@ -8,23 +8,31 @@
 # new version, which drops those connections.
 # Usage: scripts/deploy.sh <ssh-target>            e.g. me@my-host
 #        scripts/deploy.sh <ssh-target> --front
-#        scripts/deploy.sh <ssh-target> --rollback
+#        scripts/deploy.sh <ssh-target> --rollback [--front]
+# --rollback puts the previous version back and restarts boxed; with --front
+# the front too (dropping the connections), for a bad version of the front.
 set -euo pipefail
-HOST=${1:?usage: deploy.sh <ssh-target> [--front|--rollback]}
+HOST=${1:?usage: deploy.sh <ssh-target> [--front|--rollback [--front]]}
 FRONT=0
-[ "${2:-}" = --front ] && FRONT=1
+[ "${2:-}" = --front ] || [ "${3:-}" = --front ] && FRONT=1
 cd "$(dirname "$0")/.."
 
 remote() { ssh "$HOST" "sudo bash -s" -- "$@"; }
 
 if [ "${2:-}" = --rollback ]; then
-	remote <<'SH'
+	remote "$FRONT" <<'SH'
 set -euo pipefail
+FRONT=$1
 cur=$(readlink -f /usr/local/sbin/boxed)
 prev=$(ls -1t /usr/local/lib/boxed/boxed-* | grep -vx "$cur" | head -1)
 ln -sfn "$prev" /usr/local/sbin/boxed.new && mv -T /usr/local/sbin/boxed.new /usr/local/sbin/boxed
 systemctl restart boxed
-echo "rolled back to ${prev##*/}"
+if [ "$FRONT" = 1 ]; then
+	systemctl restart boxe-front
+	echo "rolled back to ${prev##*/}, front included"
+else
+	echo "rolled back to ${prev##*/} (the front keeps its version: --rollback --front for it too)"
+fi
 SH
 	exit
 fi

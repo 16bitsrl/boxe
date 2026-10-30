@@ -478,3 +478,28 @@ func TestFrontConnsJSON(t *testing.T) {
 		t.Errorf("open %v", got)
 	}
 }
+
+// A new boxed has the front check every connection at once: whoever left
+// the team while boxed was down loses their connections then, not at the
+// front's next periodic check.
+func TestSplitRestartRevalidates(t *testing.T) {
+	s := newSplit(t)
+	c := s.dialSSH()
+	if out, err := run(t, c, "new test"); err != nil {
+		t.Fatalf("new: %v: %s", err, out)
+	}
+	conn, err := c.Dial("tcp", "test.boxe:22")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := bufio.NewReader(conn)
+	r.ReadString('\n')
+	s.stopBackend()
+	s.keys.set(map[string]string{}, nil)
+	s.startBackend()
+	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	io.WriteString(conn, "gone?\n")
+	if line, err := r.ReadString('\n'); err == nil {
+		t.Errorf("jump still open after a restart without the key: %q", line)
+	}
+}

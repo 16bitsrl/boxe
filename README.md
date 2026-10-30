@@ -408,6 +408,8 @@ C8i/M8i/R8i).
   `scripts/deploy.sh <host> --rollback`. The last five versions stay in
   `/usr/local/lib/boxed/`. A deploy restarts `boxed` only, and installs
   `boxe-front.service` if it is missing or changed, without restarting it.
+  `--rollback` restarts `boxed` only; `--rollback --front` restarts the
+  front too, on the previous version, for when the front itself broke.
 - **The front:** `boxe-front` keeps running the version it started with.
   `scripts/deploy.sh <host> --front` deploys and restarts it too, on the new
   version: that drops every SSH and web connection, so do it when the front

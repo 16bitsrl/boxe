@@ -75,6 +75,9 @@ func serveBackend(b *Box, web *Web, dir string) (*backend, error) {
 			}
 		}()
 	}
+	// The keys may have changed while boxed was down: the front checks its
+	// connections now, against this boxed, which already answers.
+	b.revalidate()
 	return be, nil
 }
 
