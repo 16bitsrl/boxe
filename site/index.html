@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>boxe · Linux microVMs in a second, on your own host</title>
+<meta name="description" content="boxe is open source: tiny Linux microVMs that start in about a second on a host you own, created over SSH, each with its own HTTPS address behind your team's login.">
+<meta name="theme-color" content="#FFF7ED">
+<link rel="canonical" href="https://boxe.dev/">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="assets/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="boxe">
+<meta property="og:url" content="https://boxe.dev/">
+<meta property="og:title" content="boxe · Start with one box. Raise it.">
+<meta property="og:description" content="Tiny Linux microVMs in about a second, on a host you own. One command over SSH, a full machine with its own HTTPS address.">
+<meta property="og:image" content="https://boxe.dev/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The boxe logo and the line: Start with one box. Raise it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://boxe.dev/assets/og.png">
+<link rel="preload" href="fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css">
+<script>document.documentElement.classList.add('js')</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="bar">
+  <a class="bar-logo" href="#top" aria-label="boxe, back to the top"><img src="assets/logo.svg" alt="boxe" width="110" height="29"></a>
+  <nav aria-label="Main">
+    <a href="#features">Features</a>
+    <a href="#how">How it works</a>
+    <a href="#install">Install</a>
+    <a href="#security">Security</a>
+    <a class="btn btn-small" href="https://github.com/16bitsrl/boxe">GitHub</a>
+  </nav>
+</header>
+
+<main id="main">
+
+<section class="hero" id="top" aria-labelledby="hero-title">
+  <div class="hero-text">
+    <h1 id="hero-title"><span>Start with one box.</span> <span>Raise it.</span></h1>
+    <p class="hero-lede">Tiny Linux microVMs that start in about a second, on a host you own. Create one over SSH; it gets its own HTTPS address behind your team's login.</p>
+    <div class="hero-actions">
+      <a class="btn" href="#install">Install on your host</a>
+      <a class="link" href="https://github.com/16bitsrl/boxe">Read the code on GitHub <span aria-hidden="true">↗</span></a>
+    </div>
+    <p class="hero-note">“Ready” means the VM's SSH server answers, timed by boxe from the moment the command arrives. On our test host that takes 0.7 to 1.0&nbsp;s; with a cold cache or a busy host, up to 2.5&nbsp;s.</p>
+  </div>
+
+  <figure class="motif" aria-label="A terminal: ssh boxe new answers quick-fox ready in 0.8 seconds">
+    <div class="motif-host" data-ui>
+<pre class="motif-term"><code><span class="t-line t1"><span class="p">$</span> ssh boxe new</span><span class="t-line t2">quick-fox ready in 0.8 s</span><span class="t-line t2">&nbsp;</span><span class="t-line t2">  ssh quick-fox.boxe</span><span class="t-line t2">&nbsp;</span><span class="t-line t2">  IP 10.42.0.17, 2 CPU, 2G RAM</span></code></pre>
+    </div>
+    <div class="motif-vm" aria-hidden="true"><span>quick-fox</span></div>
+  </figure>
+</section>
+
+<section class="features" id="features" aria-labelledby="features-title">
+  <div class="board">
+    <div class="tile t-head"><h2 id="features-title">A whole machine per command</h2></div>
+
+    <article class="tile t-fork c-red">
+      <code class="frag" data-ui aria-hidden="true">fork</code>
+      <div class="cap"><h3>Fork it, memory and all</h3><p>The copy keeps the programs that were running.</p></div>
+    </article>
+
+    <article class="tile t-share c-step">
+      <code class="frag" data-ui aria-hidden="true">share 3000</code>
+      <div class="cap"><h3>Share one port</h3><p>A link for anyone, no login. <code>unshare</code> ends it.</p></div>
+    </article>
+
+    <article class="tile t-linux c-ink">
+      <code class="frag frag-lines" data-ui aria-hidden="true"><span><b>$</b> sudo apt install redis</span><span><b>$</b> docker compose up</span></code>
+      <div class="cap"><h3>A full Linux machine</h3><p>Ubuntu with <code>sudo</code>, Docker and a disk that stays. Not a container: its own kernel, in its own microVM.</p></div>
+    </article>
+
+    <article class="tile t-https c-yellow">
+      <code class="frag frag-url" data-ui aria-hidden="true"><span>quick-fox</span><span>--3000</span><span>.boxe</span></code>
+      <div class="cap"><h3>Its own HTTPS address</h3><p>Port 8000 at <code>quick-fox.boxe.example.com</code>, any port from 3000 to 9999 at <code>quick-fox--3000…</code>. Your team logs in first.</p></div>
+    </article>
+
+    <article class="tile t-agent c-white">
+      <code class="frag frag-agent" data-ui aria-hidden="true"><span>--agent</span><span>fix the</span><span>login bug</span></code>
+      <div class="cap"><h3>A coding agent in every VM</h3><p>Shelley, with your own model keys. Set them up once in one VM, then copy it with a task: the copy starts working on it.</p></div>
+    </article>
+
+    <article class="tile t-sleep c-ink">
+      <code class="frag" data-ui aria-hidden="true">sleeping</code>
+      <div class="cap"><h3>Sleep, if you turn it on</h3><p>An unused VM saves its memory to disk and frees its RAM. The next SSH or web request wakes it where it was, in about half a second.</p></div>
+    </article>
+
+    <article class="tile t-desktop c-yellow">
+      <code class="frag" data-ui aria-hidden="true">DISPLAY=:1</code>
+      <div class="cap"><h3>A desktop with Chrome</h3><p>In your browser, for the owner only. Agents can use it while you watch.</p></div>
+    </article>
+
+    <article class="tile t-ttl c-red">
+      <code class="frag" data-ui aria-hidden="true">--ttl 2h</code>
+      <div class="cap"><h3>Gone when you are done</h3><p>Give a VM a time to live and it deletes itself.</p></div>
+    </article>
+  </div>
+</section>
+
+<section class="demo" id="demo" aria-labelledby="demo-title">
+  <div class="demo-text">
+    <h2 id="demo-title">Everything is ssh</h2>
+    <p>Nothing to install on your computer: the SSH keys you already have on GitHub let you in, and every answer is plain text.</p>
+    <div class="demo-tabs" role="tablist" aria-label="Commands">
+      <button type="button" role="tab" id="tab-new" aria-controls="out-new" aria-selected="true">new</button>
+      <button type="button" role="tab" id="tab-in" aria-controls="out-in" aria-selected="false" tabindex="-1">log in</button>
+      <button type="button" role="tab" id="tab-ls" aria-controls="out-ls" aria-selected="false" tabindex="-1">ls</button>
+      <button type="button" role="tab" id="tab-fork" aria-controls="out-fork" aria-selected="false" tabindex="-1">fork</button>
+      <button type="button" role="tab" id="tab-share" aria-controls="out-share" aria-selected="false" tabindex="-1">share</button>
+      <button type="button" role="tab" id="tab-sleep" aria-controls="out-sleep" aria-selected="false" tabindex="-1">sleep</button>
+      <button type="button" role="tab" id="tab-agent" aria-controls="out-agent" aria-selected="false" tabindex="-1">--agent</button>
+    </div>
+    <p class="demo-note">Example output. Times are from our test host and vary.</p>
+  </div>
+
+  <div class="term" data-ui>
+    <div class="term-outs">
+<pre class="out on" id="out-new" role="tabpanel" aria-labelledby="tab-new" tabindex="0"><code><span class="p">$</span> ssh boxe new
+quick-fox ready in 0.8 s
+
+  ssh quick-fox.boxe
+
+  IP 10.42.0.17, 2 CPU, 2G RAM</code></pre>
+<pre class="out" id="out-in" role="tabpanel" aria-labelledby="tab-in" tabindex="0"><code><span class="p">$</span> ssh quick-fox.boxe
+
+You are on quick-fox. The disk is persistent. You have 'sudo'.
+
+Port 8000 is at https://quick-fox.boxe.example.com (team login),
+ports 3000-9999 at https://quick-fox--&lt;port&gt;.boxe.example.com.
+Shelley, the agent, is at https://quick-fox--agent.boxe.example.com (yours only),
+a desktop with a browser at https://quick-fox--desktop.boxe.example.com (DISPLAY=:1).
+Docker works: docker run --rm alpine echo hello
+Manage your VMs from your computer: ssh boxe help
+
+<span class="p">exedev@quick-fox:~$</span></code></pre>
+<pre class="out" id="out-ls" role="tabpanel" aria-labelledby="tab-ls" tabindex="0"><code><span class="p">$</span> ssh boxe ls
+NAME        IP          CPU  RAM  STATE     CPU%  RAM USED  DISK USED  OWNER  CREATED           EXPIRES   IMAGE
+quick-fox   10.42.0.17  2    2G   running   4%    618M      1.4G       ada    2026-10-30 09:12  -         boxeuntu-20261029
+calm-otter  10.42.0.9   2    4G   sleeping  -     -         3.2G       ada    2026-10-29 17:40  in 5h12m  laravel-20261029</code></pre>
+<pre class="out" id="out-fork" role="tabpanel" aria-labelledby="tab-fork" tabindex="0"><code><span class="p">$</span> ssh boxe fork quick-fox quick-fox-2
+quick-fox-2 ready in 1.1 s
+
+  ssh quick-fox-2.boxe
+
+  IP 10.42.0.18, 2 CPU, 2G RAM
+
+<span class="c"># Same memory, same running programs. New name, keys, MAC and IP.</span></code></pre>
+<pre class="out" id="out-share" role="tabpanel" aria-labelledby="tab-share" tabindex="0"><code><span class="p">$</span> ssh boxe share quick-fox 3000
+Anyone with this link sees port 3000 of quick-fox, without logging in (ssh boxe unshare quick-fox to stop it):
+
+  https://quick-fox--3000.boxe.example.com/__boxe/share/kZ3vQ8rT1mXwP0aLcY7nBg</code></pre>
+<pre class="out" id="out-sleep" role="tabpanel" aria-labelledby="tab-sleep" tabindex="0"><code><span class="p">$</span> ssh boxe sleep quick-fox
+quick-fox is asleep: it wakes up when you connect to it
+
+<span class="p">$</span> ssh quick-fox.boxe
+<span class="c"># About half a second later you are back where you left it.</span></code></pre>
+<pre class="out" id="out-agent" role="tabpanel" aria-labelledby="tab-agent" tabindex="0"><code><span class="c"># base: a VM where you set up Shelley's models once</span>
+<span class="p">$</span> ssh boxe "cp base task1 --agent fix the login bug, don't touch the API"
+task1 ready in 0.9 s
+
+  ssh task1.boxe
+
+  IP 10.42.0.21, 2 CPU, 2G RAM
+
+  Agent at work: https://task1--agent.boxe.example.com/c/fix-the-login-bug</code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="how" id="how" aria-labelledby="how-title">
+  <div class="field f1">
+    <h2 id="how-title">How it works</h2>
+    <dl class="vm-card" data-ui>
+      <div><dt>vm</dt><dd>quick-fox</dd></div>
+      <div><dt>disk</dt><dd class="off">none yet</dd></div>
+      <div><dt>process</dt><dd class="off">none yet</dd></div>
+      <div><dt>state</dt><dd>requested</dd></div>
+    </dl>
+    <p class="clause">First, one Go daemon takes the command.</p>
+    <p class="detail"><code>boxed</code> is the SSH server, the VM manager and the web front end, with its state in SQLite.</p>
+  </div>
+  <div class="field f2">
+    <dl class="vm-card" data-ui>
+      <div><dt>vm</dt><dd>quick-fox</dd></div>
+      <div><dt>disk</dt><dd>zfs clone of the base image</dd></div>
+      <div><dt>process</dt><dd class="off">none yet</dd></div>
+      <div><dt>state</dt><dd>disk ready</dd></div>
+    </dl>
+    <p class="clause">Then ZFS clones a disk, instantly.</p>
+    <p class="detail">Name, SSH keys and host certificate travel on a small read-only second disk. The host never mounts the VM's disk.</p>
+  </div>
+  <div class="field f3">
+    <dl class="vm-card" data-ui>
+      <div><dt>vm</dt><dd>quick-fox</dd></div>
+      <div><dt>disk</dt><dd>zfs clone of the base image</dd></div>
+      <div><dt>process</dt><dd>cloud-hypervisor, unprivileged</dd></div>
+      <div><dt>state</dt><dd>booting</dd></div>
+    </dl>
+    <p class="clause">Then Cloud Hypervisor boots it.</p>
+    <p class="detail">The kernel starts directly, with no firmware and no bootloader, in its own sandboxed process with no capabilities.</p>
+  </div>
+  <div class="field f4">
+    <dl class="vm-card" data-ui>
+      <div><dt>vm</dt><dd>quick-fox</dd></div>
+      <div><dt>disk</dt><dd>zfs clone of the base image</dd></div>
+      <div><dt>process</dt><dd>cloud-hypervisor, unprivileged</dd></div>
+      <div><dt>state</dt><dd>running · 0.8 s</dd></div>
+    </dl>
+    <p class="clause">Then it answers on SSH and HTTPS.</p>
+    <p class="detail">SSH goes through <code>boxed</code> as a jump host. HTTPS comes from your TLS proxy to <code>boxed</code>, which logs people in with OIDC.</p>
+  </div>
+</section>
+
+<section class="commands" id="commands" aria-labelledby="commands-title">
+  <div class="commands-body">
+    <div class="commands-side">
+      <h2 id="commands-title">The VM commands</h2>
+      <p class="commands-lede">Run them as <code>ssh boxe &lt;command&gt;</code>, or type <code>ssh boxe</code> alone for a prompt where tab completes commands and your VM names. VM commands support <code>--json</code>, for output a program can read. Put <code>--agent</code> and a prompt last on <code>cp</code>, <code>fork</code> or <code>new</code> to hand the new VM a task; the agent needs models, so copy a VM where you set them up in Shelley.</p>
+      <p class="commands-once">Once per computer, so <code>ssh &lt;vm&gt;.boxe</code> works and you trust every VM with one CA entry:</p>
+      <div class="code" data-ui>
+<pre><code>ssh boxe ssh-config &gt;&gt; ~/.ssh/config
+ssh boxe known-hosts &gt;&gt; ~/.ssh/known_hosts</code></pre>
+        <button class="copy" type="button" data-copy="ssh boxe ssh-config >> ~/.ssh/config&#10;ssh boxe known-hosts >> ~/.ssh/known_hosts">Copy</button>
+      </div>
+    </div>
+    <table class="cmd-table">
+      <caption class="sr">Commands of ssh boxe</caption>
+      <tbody>
+        <tr><th scope="row"><code>new [name]</code></th><td>Create a VM. Options: <code>--cpu 2 --mem 2G --ttl 2h --image &lt;name&gt;</code></td></tr>
+        <tr><th scope="row"><code>cp &lt;name&gt; [new-name]</code></th><td>Copy a VM, even a running one</td></tr>
+        <tr><th scope="row"><code>fork &lt;name&gt; [new-name]</code></th><td>Copy a running VM with its memory</td></tr>
+        <tr><th scope="row"><code>images</code></th><td>The images new VMs can start from</td></tr>
+        <tr class="gap"><th scope="row"><code>ls [-a]</code></th><td>Your VMs and what they use (<code>-a</code>: everyone's)</td></tr>
+        <tr><th scope="row"><code>restart &lt;name&gt;</code></th><td>Power a VM off and on again</td></tr>
+        <tr><th scope="row"><code>ttl &lt;name&gt; &lt;2h|3d|off&gt;</code></th><td>Delete a VM by itself after a while</td></tr>
+        <tr><th scope="row"><code>rm &lt;name&gt;</code></th><td>Delete a VM</td></tr>
+        <tr class="gap"><th scope="row"><code>sleep &lt;name&gt;</code></th><td>Put a VM to sleep now (if the host has sleep on)</td></tr>
+        <tr><th scope="row"><code>wake &lt;name&gt;</code></th><td>Wake a VM up (connecting does too)</td></tr>
+        <tr><th scope="row"><code>keep-awake &lt;name&gt; on|off</code></th><td>Never put this VM to sleep</td></tr>
+        <tr class="gap"><th scope="row"><code>share &lt;name&gt; [port]</code></th><td>A link to the VM for anyone (port 8000)</td></tr>
+        <tr><th scope="row"><code>unshare &lt;name&gt;</code></th><td>Make the VM's links stop working</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="install" id="install" aria-labelledby="install-title">
+  <div class="install-head">
+    <h2 id="install-title">Runs on one Linux host</h2>
+    <p>One machine with KVM and ZFS runs the whole thing. Bare metal is simplest and fastest, for example a Hetzner dedicated server. We test on Ubuntu 26.04 inside a Proxmox VM with nested virtualization. Cloud VMs work only where nested virtualization is offered: GCP, Azure, AWS C8i, M8i and R8i.</p>
+    <ul class="needs">
+      <li><code>/dev/kvm</code> and a ZFS pool</li>
+      <li>Cloud Hypervisor v54 or later</li>
+      <li>A guest kernel from <code>cloud-hypervisor/linux</code></li>
+      <li>Docker, to build the image</li>
+      <li><code>nftables</code> and <code>iptables</code></li>
+      <li>For the web: an OIDC provider, a wildcard DNS record and certificate, a TLS proxy such as Caddy</li>
+      <li>Optional: Tailscale for <code>ssh boxe</code> on your tailnet, <code>restic</code> for nightly backups</li>
+    </ul>
+  </div>
+  <ol class="steps">
+    <li>
+      <h3>Make the pool</h3>
+      <p>Replace <code>/dev/...</code> with your disk, and keep <code>boxe/sleep</code> for sleep and fork.</p>
+      <div class="code" data-ui>
+<pre><code>zpool create boxe /dev/...
+zfs create boxe/vms
+zfs create boxe/images
+zfs create boxe/sleep</code></pre>
+        <button class="copy" type="button" data-copy="zpool create boxe /dev/...&#10;zfs create boxe/vms&#10;zfs create boxe/images&#10;zfs create boxe/sleep">Copy</button>
+      </div>
+    </li>
+    <li>
+      <h3>Build the base image</h3>
+      <p>exe.dev's exeuntu with a thin layer of ours. Tag it with today's date, here <code>20261030</code>.</p>
+      <div class="code" data-ui>
+<pre><code>docker build -t boxeuntu:20261030 image/
+sudo scripts/build-base.sh boxeuntu:20261030 boxeuntu-20261030</code></pre>
+        <button class="copy" type="button" data-copy="docker build -t boxeuntu:20261030 image/&#10;sudo scripts/build-base.sh boxeuntu:20261030 boxeuntu-20261030">Copy</button>
+      </div>
+    </li>
+    <li>
+      <h3>Set up the host</h3>
+      <p>An unprivileged <code>boxe-vm</code> user, the network script, the team's GitHub usernames in <code>/etc/boxe/users</code>, the systemd units and <code>/etc/boxe/boxed.env</code>, with <code>-base boxe/images/boxeuntu-20261030@base</code>.</p>
+      <p>Sleep and fork are off until you set <code>-sleep-dir /boxe/sleep</code>; add <code>-sleep-after 30m</code> to put unused VMs to sleep.</p>
+    </li>
+    <li>
+      <h3>Deploy</h3>
+      <p>From your computer, with your host's SSH address in place of <code>me@my-host</code>: it builds <code>boxed</code>, installs it as a new version and rolls back if it does not come up.</p>
+      <div class="code" data-ui>
+<pre><code>scripts/deploy.sh me@my-host</code></pre>
+        <button class="copy" type="button" data-copy="scripts/deploy.sh me@my-host">Copy</button>
+      </div>
+    </li>
+  </ol>
+  <p class="install-more">Every step, with the settings and the backups: <a class="link" href="https://github.com/16bitsrl/boxe#install">the install guide in the README <span aria-hidden="true">↗</span></a></p>
+</section>
+
+<section class="security" id="security" aria-labelledby="security-title">
+  <div class="panel">
+    <div class="panel-lead">
+      <h2 id="security-title">Made for one team, on one host</h2>
+      <figure class="cage" aria-label="What a VM cannot reach">
+        <div class="cage-mark" aria-hidden="true"><div class="cage-host"></div><div class="cage-vm"></div></div>
+        <div class="cage-text">
+          <p>A VM reaches the internet. It cannot reach:</p>
+          <ul>
+            <li>other VMs</li>
+            <li>the host</li>
+            <li>private networks</li>
+            <li>the tailnet</li>
+            <li>cloud metadata</li>
+          </ul>
+        </div>
+      </figure>
+    </div>
+    <div class="panel-blocks">
+      <div>
+        <h3>VMs are untrusted</h3>
+        <p>Each runs in its own Cloud Hypervisor process, as an unprivileged user with no capabilities, memory and CPU limits, and only its own disks. Each may send only with its own MAC and IP.</p>
+      </div>
+      <div>
+        <h3>Members trust each other on the web</h3>
+        <p>Any logged-in member can open any VM over HTTPS, and apps get the member's email in <code>X-Box-Email</code>, a header they can trust. Share-link visitors are anonymous: no header. Apps still need CSRF protection against other VMs' pages. SSH, the agent and the desktop are for the VM's owner only.</p>
+      </div>
+      <div>
+        <h3>The rest is yours</h3>
+        <p>You secure the identity provider and the TLS proxy. One host, no high availability, not a multi-tenant cloud.</p>
+      </div>
+      <a class="btn btn-red" href="https://github.com/16bitsrl/boxe#security-model">Read the security model</a>
+    </div>
+  </div>
+</section>
+
+<section class="open" id="open-source" aria-labelledby="open-title">
+  <h2 id="open-title"><span>Open source,</span> <span>Apache 2.0</span></h2>
+  <div class="open-body">
+    <p class="open-statement">A small internal tool, made public. Read it, run it, change it.</p>
+    <div class="code code-clone" data-ui>
+<pre><code>git clone https://github.com/16bitsrl/boxe</code></pre>
+      <button class="copy" type="button" data-copy="git clone https://github.com/16bitsrl/boxe">Copy</button>
+    </div>
+    <p class="credits">boxe is a self-hosted take on <a href="https://exe.dev">exe.dev</a>. Its base image builds on <a href="https://github.com/boldsoftware/exeuntu">exeuntu</a> and ships <a href="https://github.com/boldsoftware/shelley">Shelley</a>, both by Bold Software under the Apache License&nbsp;2.0. The desktop is <a href="https://github.com/kasmtech/KasmVNC">KasmVNC</a> (GPL&nbsp;2.0); the VMs run on <a href="https://www.cloudhypervisor.org">Cloud Hypervisor</a>.</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="foot-mark" aria-hidden="true">
+    <div class="fm-host"></div>
+    <div class="fm-vm"></div>
+  </div>
+  <div class="foot-cols">
+    <img src="assets/logo-reverse.svg" alt="boxe" width="122" height="32" class="foot-logo">
+    <p class="foot-tag">Start with one box. Raise it.</p>
+    <nav aria-label="Footer">
+      <a href="https://github.com/16bitsrl/boxe">GitHub</a>
+      <a href="https://github.com/16bitsrl/boxe#install">Install guide</a>
+      <a href="https://github.com/16bitsrl/boxe#security-model">Security model</a>
+      <a href="https://github.com/16bitsrl/boxe/blob/main/LICENSE">Licence</a>
+    </nav>
+  </div>
+  <p class="foot-legal">© 2026 16bit S.r.l. · Apache License 2.0 · Fonts: Archivo and JetBrains Mono, SIL Open Font License.</p>
+</footer>
+
+<script src="main.js" defer></script>
+</body>
+</html>

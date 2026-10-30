@@ -1,0 +1,8 @@
+{{define "content"}}
+<h1>{{.Title}}</h1>
+<p class="lede">{{.Message}}</p>
+{{if .Action.URL}}<p><a class="button" href="{{.Action.URL}}">{{.Action.Label}}</a></p>
+{{else if .Logout}}<form method="post" action="/logout"><button class="button">Log out</button></form>
+{{else if not .Email}}<p><a class="button" href="/">Log in</a></p>
+{{else}}<p><a href="/">Back to your VMs</a></p>{{end}}
+{{end}}

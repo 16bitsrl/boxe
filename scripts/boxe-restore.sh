@@ -1,8 +1,8 @@
 #!/bin/bash
 # Puts back the disk of a VM from the backups (see boxe-backup.sh).
 # Usage: sudo boxe-restore.sh <vm> [restic snapshot id, default: latest]
-# The VM must exist in boxed (after a full disaster recovery, restore the
-# state first: docs/operations.md). Its current disk is kept as
+# The VM must exist in boxed (on a new host, restore the state first: see
+# Backups in README.md). Its current disk is kept as
 # <dataset>/<vm>-before-restore until you delete it.
 set -euo pipefail
 VM=$1 SNAP=${2:-latest}

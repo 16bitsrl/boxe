@@ -41,6 +41,11 @@ type Web struct {
 	// ownerEmail is the IdP email of a VM owner (a GitHub user); "" if not
 	// known, and then nobody gets to their agent.
 	ownerEmail func(user string) string
+	// The panel on <domain> (panel.go); without memberOf, no panel.
+	memberOf func(email string) (user string, admin bool)
+	vms      func(owner string) ([]vmJSON, error) // "": every VM
+	keysOf   func(user string) string             // authorized_keys lines
+	sshName  string                               // what members ssh to
 
 	mu  sync.Mutex
 	idp struct{ Auth, Token, Userinfo string } // from discovery, on first use
@@ -108,6 +113,7 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		host = h
 	}
 	if host == w.cfg.Domain {
+		panelHeaders(rw.Header(), false)
 		switch r.URL.Path {
 		case "/__boxe/login":
 			w.login(rw, r)
@@ -128,8 +134,8 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			// Only a POST from this page: VM pages are same-site and could
 			// otherwise log members out with an image or a form.
 			if r.Method != http.MethodPost {
-				rw.Header().Set("Content-Type", "text/html; charset=utf-8")
-				io.WriteString(rw, `<!doctype html><title>Log out</title><form method="post"><button>Log out of every VM</button></form>`)
+				w.render(rw, http.StatusOK, "message", panelPage{Title: "Log out", Logout: true,
+					Message: "Log out of boxe and of every VM, in every browser."})
 				return
 			}
 			if err := http.NewCrossOriginProtection().Check(r); err != nil {
@@ -145,9 +151,13 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 				log.Printf("web: %s logged out", s.E)
 			}
 			http.SetCookie(rw, cookie(sessionCookie, "", -1))
-			io.WriteString(rw, "Logged out of every VM.\n")
+			w.message(rw, http.StatusOK, "Logged out", "You are logged out of boxe and of every VM.")
 		default:
-			io.WriteString(rw, "boxe: microVMs for the team.\nhttps://<vm>."+w.cfg.Domain+" shows port 8000 of the VM, https://<vm>--3000."+w.cfg.Domain+" port 3000 (3000-9999).\n")
+			if w.memberOf == nil {
+				io.WriteString(rw, "boxe: microVMs for the team.\nhttps://<vm>."+w.cfg.Domain+" shows port 8000 of the VM, https://<vm>--3000."+w.cfg.Domain+" port 3000 (3000-9999).\n")
+				return
+			}
+			w.servePanel(rw, r)
 		}
 		return
 	}
@@ -292,15 +302,15 @@ func (w *Web) sessionCookie(email, host string, auth int64) *http.Cookie {
 	return cookie(sessionCookie, w.sign(claims{P: "session", E: email, H: host, A: auth}, ttl), int(ttl.Seconds()))
 }
 
-// login on <domain>: with a session there, hand off to the VM host right
-// away; otherwise go to the IdP first.
+// login on <domain>: with a session there, hand off to the VM host (or go
+// back to the panel) right away; otherwise go to the IdP first.
 func (w *Web) login(rw http.ResponseWriter, r *http.Request) {
 	ret, err := url.Parse(r.FormValue("r"))
 	if err != nil || ret.Scheme != "https" || ret.User != nil || ret.Port() != "" {
 		http.Error(rw, "Invalid address.", http.StatusBadRequest)
 		return
 	}
-	if _, _, ok := w.vmHost(ret.Host); !ok {
+	if _, _, ok := w.vmHost(ret.Host); !ok && ret.Host != w.cfg.Domain {
 		http.Error(rw, "Invalid address.", http.StatusBadRequest)
 		return
 	}
@@ -315,12 +325,20 @@ func (w *Web) login(rw http.ResponseWriter, r *http.Request) {
 	}
 	nonce := randomString()
 	http.SetCookie(rw, cookie(stateCookie, nonce, 600))
+	// Other IdPs refuse a scope they do not know.
+	scope := "openid email profile"
+	if w.cfg.OrgID != "" {
+		scope += " urn:zitadel:iam:user:resourceowner"
+	}
 	q := url.Values{
 		"client_id":     {w.cfg.ClientID},
 		"redirect_uri":  {w.redirectURI()},
 		"response_type": {"code"},
-		"scope":         {"openid email profile urn:zitadel:iam:user:resourceowner"},
+		"scope":         {scope},
 		"state":         {w.sign(claims{P: "state", R: ret.String(), N: nonce}, 10*time.Minute)},
+	}
+	if r.FormValue("prompt") == "select_account" {
+		q.Set("prompt", "select_account")
 	}
 	http.Redirect(rw, r, w.idp.Auth+"?"+q.Encode(), http.StatusFound)
 }
@@ -345,7 +363,11 @@ func (w *Web) callback(rw http.ResponseWriter, r *http.Request) {
 	}
 	if !w.member(email, verified, org) {
 		log.Printf("web: login refused for %s (organization %s)", email, org)
-		http.Error(rw, "This account is not part of the team.", http.StatusForbidden)
+		// The IdP logs the same account in again unless asked to let the
+		// user pick another.
+		w.render(rw, http.StatusForbidden, "message", panelPage{Title: "Not part of the team",
+			Message: "You logged in as " + email + ", which is not part of the team. Log in with your team account.",
+			Action:  panelLink{"Use another account", "/__boxe/login?" + url.Values{"r": {st.R}, "prompt": {"select_account"}}.Encode()}})
 		return
 	}
 	log.Printf("web: %s logged in", email)
@@ -356,9 +378,17 @@ func (w *Web) callback(rw http.ResponseWriter, r *http.Request) {
 	w.handoff(rw, r, s, ret)
 }
 
-// handoff sends the browser to the VM host with a token only that host accepts.
+// handoff sends the browser to the VM host with a token only that host
+// accepts; to the panel, which has the session already, it just goes back.
 func (w *Web) handoff(rw http.ResponseWriter, r *http.Request, s claims, ret *url.URL) {
 	path := ret.RequestURI()
+	if ret.Host == w.cfg.Domain {
+		if strings.HasPrefix(path, "//") {
+			path = "/" // would be another site
+		}
+		http.Redirect(rw, r, path, http.StatusFound)
+		return
+	}
 	t := w.sign(claims{P: "handoff", E: s.E, A: s.A, H: ret.Host, R: path}, time.Minute)
 	http.Redirect(rw, r, "https://"+ret.Host+"/__boxe/session?"+url.Values{"t": {t}}.Encode(), http.StatusFound)
 }

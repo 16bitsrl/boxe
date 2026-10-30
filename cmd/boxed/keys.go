@@ -24,6 +24,7 @@ type Keys struct {
 	byKey  map[string]string // marshalled public key -> user
 	byUser map[string]string // user -> authorized_keys lines
 	emails map[string]string // user -> email at the IdP, if given
+	admins map[string]bool   // users marked admin in usersFile
 	lastOK time.Time         // last refresh where GitHub answered for everyone
 }
 
@@ -60,8 +61,21 @@ func (k *Keys) Email(user string) string {
 	return k.emails[user]
 }
 
+// Member is the user whose email at the IdP is email, and whether they are
+// an admin; "" if the users file links no user to it.
+func (k *Keys) Member(email string) (user string, admin bool) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	for u, e := range k.emails {
+		if e != "" && e == strings.ToLower(email) {
+			return u, k.admins[u]
+		}
+	}
+	return "", false
+}
+
 func (k *Keys) Refresh() {
-	users, emails, err := readUsers(k.usersFile)
+	users, emails, admins, err := readUsers(k.usersFile)
 	if err != nil {
 		log.Printf("keys: %v", err)
 		return
@@ -92,7 +106,7 @@ func (k *Keys) Refresh() {
 	}
 	k.set(byKey, byUser)
 	k.mu.Lock()
-	k.emails = emails
+	k.emails, k.admins = emails, admins
 	k.mu.Unlock()
 	if allOK {
 		k.mu.Lock()
@@ -111,14 +125,14 @@ func (k *Keys) set(byKey, byUser map[string]string) {
 }
 
 // readUsers reads the users file: one GitHub username per line, optionally
-// followed by the member's email at the IdP.
-func readUsers(path string) (users []string, emails map[string]string, err error) {
+// followed by the member's email at the IdP and "admin" for an admin.
+func readUsers(path string) (users []string, emails map[string]string, admins map[string]bool, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer f.Close()
-	emails = map[string]string{}
+	emails, admins = map[string]string{}, map[string]bool{}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
@@ -129,8 +143,11 @@ func readUsers(path string) (users []string, emails map[string]string, err error
 		if len(fields) > 1 {
 			emails[fields[0]] = strings.ToLower(fields[1])
 		}
+		if len(fields) > 2 && fields[2] == "admin" {
+			admins[fields[0]] = true
+		}
 	}
-	return users, emails, sc.Err()
+	return users, emails, admins, sc.Err()
 }
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}

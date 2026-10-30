@@ -70,6 +70,22 @@ func (h *Hypervisor) config(name string) string {
 }
 func unit(name string) string { return "boxe-vm-" + name }
 
+// checkSetup says what the host lacks to run VMs, so that boxed stops at
+// start instead of failing every new VM with a vaguer error.
+func (h *Hypervisor) checkSetup(lookPath func(string) (string, error)) error {
+	if _, err := os.Stat(h.Kernel); err != nil {
+		return fmt.Errorf("-kernel: %w", err)
+	}
+	if _, err := lookPath("/usr/local/bin/cloud-hypervisor"); err != nil {
+		return fmt.Errorf("cloud-hypervisor: %w", err)
+	}
+	// Sleep and fork drive the hypervisor through its API.
+	if _, err := lookPath("ch-remote"); h.SleepDir != "" && err != nil {
+		return fmt.Errorf("-sleep-dir needs ch-remote, from the Cloud Hypervisor release: %w", err)
+	}
+	return nil
+}
+
 // vmRunDir holds a VM's control socket and vsock: its hypervisor sees only
 // its own.
 func vmRunDir(name string) string  { return filepath.Join(runDir, name) }

@@ -144,9 +144,10 @@ func (b *Box) server() *ssh.Server {
 	}
 }
 
-// help is the text of `ssh boxe`, with this installation's names.
-func (b *Box) help() string {
-	h := strings.NewReplacer("SSH", "ssh "+b.name, "SUFFIX", b.hv.SSHSuffix).Replace(`boxe: microVMs for your team
+// help is the text of `ssh boxe`, with this installation's names; cmd
+// comes before each command ("ssh boxe ", or nothing at the prompt).
+func (b *Box) help(cmd string) string {
+	h := strings.NewReplacer("SSH ", cmd, "SUFFIX", b.hv.SSHSuffix).Replace(`boxe: microVMs for your team
 
   SSH new [name]                        create a VM (options: --cpu 2 --mem 2G --ttl 2h --image <name>)
   SSH ls [-a]                           your VMs (-a: everyone's)
@@ -178,14 +179,29 @@ To log into a VM: ssh <name>.SUFFIX
 
 func (b *Box) session(s ssh.Session) {
 	user, _ := s.Context().Value(userKey).(string)
-	raw, agent, hasAgent := cutAgent(s.RawCommand())
-	words, _ := shlex.Split(raw, true)
-	args, asJSON := cutFlag(words, "--json")
-	o := output{w: s, json: asJSON}
-	if len(args) == 0 {
-		io.WriteString(s, b.help())
+	if pty, win, isPty := s.Pty(); isPty && s.RawCommand() == "" {
+		b.prompt(s, user, pty.Window, win)
 		s.Exit(0)
 		return
+	}
+	if err := b.run(s, user, s.RawCommand(), "ssh "+b.name+" "); err != nil {
+		fmt.Fprintln(s.Stderr(), "error:", err)
+		s.Exit(1)
+		return
+	}
+	s.Exit(0)
+}
+
+// run is one command line, as typed after `ssh boxe` or at the prompt;
+// cmd is how the help writes a command there.
+func (b *Box) run(w io.Writer, user, line, cmd string) error {
+	raw, agent, hasAgent := cutAgent(line)
+	words, _ := shlex.Split(raw, true)
+	args, asJSON := cutFlag(words, "--json")
+	o := output{w: w, json: asJSON}
+	if len(args) == 0 {
+		io.WriteString(w, b.help(cmd))
+		return nil
 	}
 	var err error
 	if hasAgent && agent == "" {
@@ -222,26 +238,21 @@ func (b *Box) session(s ssh.Session) {
 	case args[0] == "images":
 		err = b.cmdImages(o)
 	case args[0] == "ssh-config":
-		fmt.Fprintf(s, "Host *.%s\n  User exedev\n  ProxyJump %s\n", b.hv.SSHSuffix, b.name)
+		fmt.Fprintf(w, "Host *.%s\n  User exedev\n  ProxyJump %s\n", b.hv.SSHSuffix, b.name)
 	case args[0] == "known-hosts":
 		// Every VM's host key is signed by boxe: one line trusts them all.
-		fmt.Fprintf(s, "@cert-authority *.%s %s", b.hv.SSHSuffix, gossh.MarshalAuthorizedKey(b.hv.HostCA.PublicKey()))
+		fmt.Fprintf(w, "@cert-authority *.%s %s", b.hv.SSHSuffix, gossh.MarshalAuthorizedKey(b.hv.HostCA.PublicKey()))
 	case args[0] == "whoami":
 		o.print(map[string]string{"user": user}, user+"\n")
 	case args[0] == "help":
-		io.WriteString(s, b.help())
+		io.WriteString(w, b.help(cmd))
 	default:
 		err = fmt.Errorf("unknown command: %s (ssh %s help)", args[0], b.name)
 	}
-	if err != nil {
-		if asJSON {
-			o.print(map[string]string{"error": err.Error()}, "")
-		}
-		fmt.Fprintln(s.Stderr(), "error:", err)
-		s.Exit(1)
-		return
+	if err != nil && asJSON {
+		o.print(map[string]string{"error": err.Error()}, "")
 	}
-	s.Exit(0)
+	return err
 }
 
 // output prints a command's result for people, or as JSON with --json.
@@ -822,21 +833,10 @@ func (b *Box) cmdLs(o output, user string, args []string) error {
 	if len(args) == 1 && args[0] == "-a" {
 		owner = ""
 	}
-	vms, err := b.store.List(owner)
+	now := time.Now()
+	vms, list, err := b.list(owner, now)
 	if err != nil {
 		return err
-	}
-	list := []vmJSON{}
-	disks := b.hv.DiskUsage()
-	now := time.Now()
-	for _, v := range vms {
-		j := b.vmJSON(v)
-		if j.State == "running" {
-			j.CPUPercent = b.cpuPercent(v.Name, now)
-			j.MemUsed = b.hv.MemUsage(v.Name)
-		}
-		j.DiskUsed = disks[v.Name]
-		list = append(list, j)
 	}
 	if o.json {
 		o.print(list, "")
@@ -858,6 +858,27 @@ func (b *Box) cmdLs(o output, user string, args []string) error {
 			vms[i].Created.Local().Format("2006-01-02 15:04"), expiresIn(vms[i].Expires, now), image)
 	}
 	return w.Flush()
+}
+
+// list is the VMs of owner (all with ""), with what each uses, as ls and
+// the panel show them.
+func (b *Box) list(owner string, now time.Time) ([]VM, []vmJSON, error) {
+	vms, err := b.store.List(owner)
+	if err != nil {
+		return nil, nil, err
+	}
+	list := []vmJSON{}
+	disks := b.hv.DiskUsage()
+	for _, v := range vms {
+		j := b.vmJSON(v)
+		if j.State == "running" {
+			j.CPUPercent = b.cpuPercent(v.Name, now)
+			j.MemUsed = b.hv.MemUsage(v.Name)
+		}
+		j.DiskUsed = disks[v.Name]
+		list = append(list, j)
+	}
+	return vms, list, nil
 }
 
 // size is a number of bytes for people, e.g. 700M or 5.1G; "-" for none.

@@ -323,11 +323,36 @@ func (b *Box) sleepIfIdle(v VM, now time.Time) {
 	b.actMu.Unlock()
 }
 
-// SleepLoop puts idle VMs to sleep, every so often.
+// SleepLoop records what VMs use and puts idle ones to sleep, every so
+// often (a minute: the CPU of a sample is over the time since the last).
 func (b *Box) SleepLoop(every time.Duration) {
 	for {
 		time.Sleep(every)
-		b.sleepIdle(time.Now())
+		now := time.Now()
+		b.sample(now)
+		b.sleepIdle(now)
+	}
+}
+
+// sampleMaxAge is how long the usage of VMs is kept, for the panel's charts.
+const sampleMaxAge = 30 * 24 * time.Hour
+
+// sample records what each VM uses now.
+func (b *Box) sample(now time.Time) {
+	vms, list, err := b.list("", now)
+	if err != nil {
+		log.Printf("sample: %v", err)
+		return
+	}
+	for i, v := range vms {
+		j := list[i]
+		if err := b.store.AddSample(v.Name, Sample{At: now, CPU: j.CPUPercent, Mem: j.MemUsed, Disk: j.DiskUsed}); err != nil {
+			log.Printf("sample: %v", err)
+			return
+		}
+	}
+	if err := b.store.PruneSamples(now.Add(-sampleMaxAge)); err != nil {
+		log.Printf("sample: %v", err)
 	}
 }
 

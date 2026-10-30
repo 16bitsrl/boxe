@@ -1,0 +1,28 @@
+{{define "content"}}
+<h1>Account</h1>
+<div class="card">
+  <dl class="facts">
+    <dt>Email</dt><dd>{{.Email}}</dd>
+    <dt>GitHub</dt><dd>{{if .User}}<a href="https://github.com/{{.User}}" target="_blank" rel="noopener">{{.User}}</a>{{else}}not linked: ask an admin to add you to the team{{end}}</dd>
+    {{if .Admin}}<dt>Role</dt><dd>admin</dd>{{end}}
+  </dl>
+</div>
+{{if .User}}
+<h2>SSH keys</h2>
+<div class="card">
+  <p>boxe lets in the keys of your GitHub account. To change them, change them on GitHub: boxe picks them up within 10 minutes.</p>
+  {{if .Keys}}<ul class="keys">{{range .Keys}}<li><code>{{.}}</code></li>{{end}}</ul>{{else}}<p>No keys found on GitHub.</p>{{end}}
+</div>
+<h2>Set up SSH</h2>
+<div class="card">
+  <p>Once per computer, so that <code>ssh &lt;vm&gt;.boxe</code> works:</p>
+  <div class="cmd"><code><b>$</b> ssh {{.SSH}} ssh-config &gt;&gt; ~/.ssh/config</code><button class="copy" data-copy="ssh {{.SSH}} ssh-config >> ~/.ssh/config" hidden>Copy</button></div>
+  <div class="cmd"><code><b>$</b> ssh {{.SSH}} known-hosts &gt;&gt; ~/.ssh/known_hosts</code><button class="copy" data-copy="ssh {{.SSH}} known-hosts >> ~/.ssh/known_hosts" hidden>Copy</button></div>
+</div>
+{{end}}
+<h2>Sessions</h2>
+<div class="card">
+  <p>Logging out ends your sessions on boxe and on every VM, in this browser and the others.</p>
+  <form method="post" action="/logout"><button class="button">Log out everywhere</button></form>
+</div>
+{{end}}

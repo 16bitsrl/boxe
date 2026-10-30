@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -30,7 +31,7 @@ var version = "dev"
 func main() {
 	var (
 		stateDir    = flag.String("state", "/var/lib/boxe", "state directory (database, host key, tsnet)")
-		usersFile   = flag.String("users", "/etc/boxe/users", "GitHub usernames of the team, one per line")
+		usersFile   = flag.String("users", "/etc/boxe/users", "the team, one per line: GitHub username, email at the IdP, \"admin\" for an admin")
 		hostKey     = flag.String("vm-key", "/etc/boxe/id_ed25519.pub", "the host's public key, added to every VM")
 		base        = flag.String("base", "boxe/images/boxeuntu@base", "snapshot new VMs are cloned from")
 		dataset     = flag.String("dataset", "boxe/vms", "ZFS dataset holding the VM disks")
@@ -135,6 +136,9 @@ func main() {
 			SSHSuffix: *sshSuffix, WebDomain: webDomain, DNS: splitList(*dns),
 			Boxed: selfPath(),
 		}}
+	if err := b.hv.checkSetup(exec.LookPath); err != nil {
+		log.Fatal(err)
+	}
 
 	go b.RefreshLoop(10 * time.Minute)
 
@@ -167,6 +171,7 @@ func main() {
 		}
 		web.busy = b.busy
 		web.ownerEmail = keys.Email
+		b.panel(web)
 		go func() { log.Fatal(http.ListenAndServe(*httpAddr, web)) }()
 	}
 

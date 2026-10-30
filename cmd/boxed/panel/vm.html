@@ -1,0 +1,33 @@
+{{define "content"}}
+<nav class="crumbs"><a href="/">{{if .Admin}}All VMs{{else}}Your VMs{{end}}</a> <span>/</span> {{.VM.Name}}</nav>
+<div class="card detail">
+  <div class="title">
+    <h1>{{.VM.Name}}</h1>
+    <span class="state is-{{.VM.State}}">{{.VM.State}}</span>
+  </div>
+  <div class="cmd"><code><b>$</b> ssh {{.VM.SSH}}</code><button class="copy" data-copy="ssh {{.VM.SSH}}" hidden>Copy</button></div>
+  <div class="links">
+    {{range .Links}}<a class="button" href="{{.URL}}" target="_blank" rel="noopener">{{.Label}}</a>{{end}}
+  </div>
+  <div class="cols">
+    <dl class="facts">
+      <dt>Owner</dt><dd>{{.VM.Owner}}</dd>
+      <dt>Size</dt><dd>{{.VM.CPUs}} vCPU · {{.VM.Mem}} RAM</dd>
+      <dt>Image</dt><dd>{{if .VM.Image}}{{.VM.Image}}{{else}}-{{end}}</dd>
+      <dt>Created</dt><dd>{{when .VM.Created}}</dd>
+      {{if .VM.Expires}}<dt>Deleted at</dt><dd>{{when .VM.Expires}}</dd>{{end}}
+      <dt>Sleep</dt><dd>{{if .VM.KeepAwake}}kept awake{{else}}when unused{{end}}</dd>
+      <dt>IP</dt><dd>{{.VM.IP}}</dd>
+    </dl>
+    <dl class="facts">
+      <dt>CPU</dt><dd>{{pct .VM.CPUPercent}}</dd>
+      <dt>RAM used</dt><dd>{{size .VM.MemUsed}}</dd>
+      <dt>Disk used</dt><dd>{{size .VM.DiskUsed}}</dd>
+    </dl>
+  </div>
+  <h2>Web</h2>
+  <p>Port 8000 of the VM is <a href="{{.VM.URL}}" target="_blank" rel="noopener">{{.VM.URL}}</a>, open to the team after login.
+  Ports 3000 to 9999 are <code>https://{{.VM.Name}}--3000.{{.Domain}}</code> and so on.</p>
+  <p>To show a port to someone outside the team: <code>ssh {{.SSH}} share {{.VM.Name}}</code>.</p>
+</div>
+{{end}}

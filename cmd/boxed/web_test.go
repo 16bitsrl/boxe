@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -17,8 +18,12 @@ import (
 
 const testOrg = "org-team"
 
+// testEmails are the members the fake IdP logs in by code, besides alice.
+var testEmails = map[string]string{"bob": "bob@example.com", "admin": "mattia@example.com", "stranger": "stranger@example.com"}
+
 // fakeIdP stands in for Zitadel: code "member" logs in a team member,
-// code "outsider" a user of another organization. Until up is set, discovery
+// alice, code "outsider" a user of another organization, and the codes in
+// testEmails other members of the team. Until up is set, discovery
 // fails as if the IdP were down.
 type fakeIdP struct {
 	*httptest.Server
@@ -56,8 +61,12 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		if r.Header.Get("Authorization") == "Bearer tok-outsider" {
 			org = "org-other"
 		}
+		email := "alice@example.com"
+		if e, ok := testEmails[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer tok-")]; ok {
+			email = e
+		}
 		json.NewEncoder(w).Encode(map[string]any{
-			"email":                                 "alice@example.com",
+			"email":                                 email,
 			"email_verified":                        true,
 			"urn:zitadel:iam:user:resourceowner:id": org,
 		})
@@ -238,9 +247,33 @@ func TestWebSessionCookiesAreHostOnly(t *testing.T) {
 
 func TestWebRejectsOtherOrganizations(t *testing.T) {
 	wt := newWebTest(t)
-	res := wt.browser("outsider").get("https://test.boxe.example/", nil)
+	b := wt.browser("outsider")
+	res := b.get("https://test.boxe.example/", nil)
 	if res.StatusCode != http.StatusForbidden {
 		t.Fatalf("outsider: %d, want 403", res.StatusCode)
+	}
+	// The IdP keeps the account it logged in: the page offers to pick
+	// another one, then goes on to the same page.
+	page := body(res)
+	i := strings.Index(page, `href="/__boxe/login?`)
+	if i < 0 || !strings.Contains(page, "Use another account") {
+		t.Fatalf("no link to another account:\n%s", page)
+	}
+	link := html.UnescapeString(page[i+len(`href="`):])
+	link = link[:strings.Index(link, `"`)]
+	res = b.do("https://boxe.example"+link, nil)
+	loc, _ := url.Parse(res.Header.Get("Location"))
+	if q := loc.Query(); q.Get("prompt") != "select_account" {
+		t.Errorf("%s: authorize query %v", link, q)
+	}
+	st, _ := wt.web.verify(loc.Query().Get("state"), "state")
+	if st.R != "https://test.boxe.example/" {
+		t.Errorf("goes back to %q", st.R)
+	}
+	// A plain login does not ask.
+	res = b.do("https://boxe.example/__boxe/login?r="+url.QueryEscape("https://test.boxe.example/"), nil)
+	if loc, _ := url.Parse(res.Header.Get("Location")); loc.Query().Has("prompt") {
+		t.Errorf("plain login: %v", loc)
 	}
 }
 
@@ -509,6 +542,26 @@ func TestWebEmailDomains(t *testing.T) {
 	wt.web.cfg.EmailDomains = nil
 	if res := wt.browser("member").get("https://test.boxe.example/", nil); res.StatusCode != http.StatusForbidden {
 		t.Errorf("no rule at all: %d, want 403 (nobody gets in by default)", res.StatusCode)
+	}
+}
+
+// Only Zitadel knows its organization scope: other IdPs (Dex, Google)
+// refuse a login that asks for it.
+func TestWebAsksZitadelScopeOnlyForOrg(t *testing.T) {
+	wt := newWebTest(t)
+	wt.idp.up.Store(true)
+	scope := func() string {
+		res := wt.browser("member").do("https://boxe.example/__boxe/login?r="+url.QueryEscape("https://test.boxe.example/"), nil)
+		loc, _ := url.Parse(res.Header.Get("Location"))
+		return loc.Query().Get("scope")
+	}
+	if s := scope(); !strings.Contains(s, "urn:zitadel:iam:user:resourceowner") {
+		t.Errorf("with an organization: scope %q", s)
+	}
+	wt.web.cfg.OrgID = ""
+	wt.web.cfg.EmailDomains = []string{"example.com"}
+	if s := scope(); s != "openid email profile" {
+		t.Errorf("with email domains: scope %q", s)
 	}
 }
 

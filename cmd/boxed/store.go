@@ -64,7 +64,15 @@ CREATE TABLE IF NOT EXISTS shares (
 	idx        INTEGER NOT NULL,
 	port       INTEGER NOT NULL,
 	created_at TEXT NOT NULL
-);`)
+);
+CREATE TABLE IF NOT EXISTS samples (
+	vm   TEXT NOT NULL,
+	at   INTEGER NOT NULL, -- Unix seconds
+	cpu  REAL NOT NULL,    -- percent, 100: one core
+	mem  INTEGER NOT NULL, -- bytes
+	disk INTEGER NOT NULL  -- bytes
+);
+CREATE INDEX IF NOT EXISTS samples_vm_at ON samples (vm, at);`)
 	if err != nil {
 		return nil, err
 	}
@@ -147,10 +155,13 @@ func timeCol(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// Delete forgets the VM and its share links: a new VM with the same name
-// must not inherit them.
+// Delete forgets the VM, its share links and its usage: a new VM with the
+// same name must not inherit them.
 func (s *Store) Delete(name string) error {
 	if _, err := s.Unshare(name); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec("DELETE FROM samples WHERE vm = ?", name); err != nil {
 		return err
 	}
 	_, err := s.db.Exec("DELETE FROM vms WHERE name = ?", name)
@@ -184,6 +195,45 @@ func (s *Store) Unshare(name string) (int, error) {
 	}
 	n, err := res.RowsAffected()
 	return int(n), err
+}
+
+// Sample is what a VM used at a time: CPU over the minute before (100: one
+// core), RAM taken on the host and space its disk takes, in bytes.
+type Sample struct {
+	At        time.Time
+	CPU       float64
+	Mem, Disk int64
+}
+
+func (s *Store) AddSample(vm string, x Sample) error {
+	_, err := s.db.Exec("INSERT INTO samples (vm, at, cpu, mem, disk) VALUES (?, ?, ?, ?, ?)", vm, x.At.Unix(), x.CPU, x.Mem, x.Disk)
+	return err
+}
+
+// Samples of vm since a time, oldest first.
+func (s *Store) Samples(vm string, since time.Time) ([]Sample, error) {
+	rows, err := s.db.Query("SELECT at, cpu, mem, disk FROM samples WHERE vm = ? AND at >= ? ORDER BY at", vm, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []Sample
+	for rows.Next() {
+		var x Sample
+		var at int64
+		if err := rows.Scan(&at, &x.CPU, &x.Mem, &x.Disk); err != nil {
+			return nil, err
+		}
+		x.At = time.Unix(at, 0)
+		list = append(list, x)
+	}
+	return list, rows.Err()
+}
+
+// PruneSamples forgets the samples from before t.
+func (s *Store) PruneSamples(t time.Time) error {
+	_, err := s.db.Exec("DELETE FROM samples WHERE at < ?", t.Unix())
+	return err
 }
 
 func (s *Store) SaveKeys(user, keys string) error {

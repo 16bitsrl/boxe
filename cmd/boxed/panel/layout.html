@@ -1,0 +1,27 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{if .Title}}{{.Title}} · {{end}}boxe</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="stylesheet" href="/static/panel.css">
+<script src="/static/panel.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="/"><img src="/static/logo.svg" alt="boxe" width="107" height="28"></a>
+  {{if .Email}}<nav>
+    <a href="/"{{if eq .Nav "vms"}} aria-current="page"{{end}}>VMs</a>
+    <a href="/me"{{if eq .Nav "me"}} aria-current="page"{{end}}>Account</a>
+    <form method="post" action="/logout"><button class="link">Log out</button></form>
+  </nav>{{end}}
+</header>
+<main>
+{{template "content" .}}
+</main>
+</body>
+</html>
+{{end}}

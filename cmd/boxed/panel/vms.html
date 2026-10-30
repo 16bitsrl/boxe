@@ -1,0 +1,43 @@
+{{define "content"}}
+<div class="heading">
+  <h1>{{if .Admin}}All VMs{{else}}Your VMs{{end}}</h1>
+  <div class="cmd"><code><b>$</b> ssh {{.SSH}} new</code><button class="copy" data-copy="ssh {{.SSH}} new" hidden>Copy</button></div>
+</div>
+{{if not .User}}
+<div class="card note">
+  <p>You are logged in as <b>{{.Email}}</b>, but no GitHub account on boxe is linked to this email yet.</p>
+  <p>Ask an admin to add you to the team.</p>
+</div>
+{{else if not .VMs}}
+<div class="card empty">
+  <p>You have no VMs yet. Create one in about a second:</p>
+  <p><code>ssh {{.SSH}} new</code></p>
+</div>
+{{else}}
+<div class="card">
+<table class="vms">
+<thead><tr>
+  <th>Name</th>{{if .Admin}}<th>Owner</th>{{end}}<th>State</th>
+  <th class="num">CPU</th><th class="num">RAM</th><th class="num">Disk</th><th class="actions"><span class="sr">Open</span></th>
+</tr></thead>
+<tbody>
+{{range .VMs}}
+<tr>
+  <td><a class="name" href="/vm/{{.Name}}">{{.Name}}</a><span class="sub">{{.CPUs}} vCPU · {{.Mem}}{{if .Image}} · {{.Image}}{{end}}</span></td>
+  {{if $.Admin}}<td class="owner">{{.Owner}}</td>{{end}}
+  <td><span class="state is-{{.State}}">{{.State}}</span></td>
+  <td class="num" data-label="CPU">{{pct .CPUPercent}}</td>
+  <td class="num" data-label="RAM">{{size .MemUsed}}</td>
+  <td class="num" data-label="Disk">{{size .DiskUsed}}</td>
+  <td class="actions">
+    {{if .URL}}<a class="button small" href="{{.URL}}" target="_blank" rel="noopener">Open</a>{{end}}
+    <button class="copy small" data-copy="ssh {{.SSH}}" hidden title="Copy ssh {{.SSH}}">Copy SSH</button>
+  </td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+<p class="hint">CPU over the last minute (100% is one core), RAM the VM takes on the host, space its disk takes.</p>
+{{end}}
+{{end}}

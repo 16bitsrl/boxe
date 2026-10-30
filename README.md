@@ -115,8 +115,14 @@ list of VMs, `new` and `cp` the new VM, errors `{"error": "..."}`.
 the RAM it takes on the host (the memory the VM has touched, which grows up
 to its RAM) and the space its disk takes in the pool.
 
-`ssh boxe cp base task1 --agent fix the login bug, don't touch the API`:
-everything after `--agent` is the prompt, as typed.
+`ssh boxe "cp base task1 --agent fix the login bug, don't touch the API"`:
+everything after `--agent` is the prompt, as typed. Quote the whole command
+when the prompt has characters your shell would read, like an apostrophe.
+
+`ssh boxe` alone, from a terminal, opens a prompt: type the commands
+without `ssh boxe`, with history and tab completion of commands and of your
+VM names. `exit` or ctrl-d leaves it. From a script, `ssh boxe` prints the
+help instead.
 
 Once per computer: `ssh boxe ssh-config >> ~/.ssh/config` and
 `ssh boxe known-hosts >> ~/.ssh/known_hosts`.
@@ -170,15 +176,24 @@ C8i/M8i/R8i).
 
 1. **Host:** `/dev/kvm`, a ZFS pool (`zpool create boxe /dev/...`, then
    `zfs create boxe/vms`, `zfs create boxe/images` and, for sleep and fork,
-   `zfs create boxe/sleep`), Docker (to build the
-   image), `nftables`, `iptables`, `restic` (for backups), and
-   [Tailscale](https://tailscale.com) if `ssh boxe` should live on your
-   tailnet.
-2. **Cloud Hypervisor:** the static `cloud-hypervisor` binary in
-   `/usr/local/bin` (v54 or later).
-3. **Guest kernel:** build the `ch-*` branch of
-   `github.com/cloud-hypervisor/linux` with `kernel/config-*`, and install
-   `vmlinux` in `/var/lib/boxe/kernels/`.
+   `zfs create boxe/sleep`), Docker (to build the image), `nftables`,
+   `iptables` and `restic` (for backups). On Ubuntu:
+   `apt install zfsutils-linux docker.io nftables iptables restic`.
+2. **Cloud Hypervisor** (v54 or later): from its
+   [release](https://github.com/cloud-hypervisor/cloud-hypervisor/releases),
+   `cloud-hypervisor-static` as `/usr/local/bin/cloud-hypervisor` and
+   `ch-remote-static` as `/usr/local/bin/ch-remote` (sleep and fork use it).
+3. **Guest kernel:** the `ch-7.2.8` branch of
+   `github.com/cloud-hypervisor/linux`, with `kernel/config-7.2.8-boxe`.
+   It builds in a few minutes:
+   ```
+   apt install build-essential flex bison bc libelf-dev libssl-dev
+   git clone --depth 1 -b ch-7.2.8 https://github.com/cloud-hypervisor/linux
+   cp kernel/config-7.2.8-boxe linux/.config
+   make -C linux olddefconfig && make -C linux -j$(nproc) vmlinux
+   install -D -m644 linux/vmlinux /var/lib/boxe/kernels/vmlinux-7.2.8-boxe
+   ```
+   That path is `boxed`'s default; a kernel elsewhere needs `-kernel`.
 4. **Base image:**
    `docker build -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>`.
 5. **Host setup:**
@@ -186,22 +201,45 @@ C8i/M8i/R8i).
    - Install `scripts/net-setup.sh` in `/usr/local/sbin`, with
      `/etc/boxe/net.conf` setting `BOXE_PROXY=<proxy IP>` if the TLS proxy is
      another machine.
-   - Generate a key pair for the host to reach VMs (`/etc/boxe/id_ed25519`).
+   - Generate a key pair for the host to reach VMs:
+     `ssh-keygen -t ed25519 -N '' -f /etc/boxe/id_ed25519`.
    - List the team in `/etc/boxe/users` (see `scripts/users.example`).
-   - Install the units in `scripts/` and enable `boxe-net` and `boxed`.
+   - Install `boxe-net.service` and `boxed.service` from `scripts/` in
+     `/etc/systemd/system`, then `systemctl enable --now boxe-net` and
+     `systemctl enable boxed` (it starts at the first deploy).
 6. **Settings:** `/etc/boxe/boxed.env` (see `scripts/boxed.env.example` and
    `boxed -help`).
-   - For the web front end you need an OIDC client in `/etc/boxe/oidc`
-     (`OIDC_CLIENT_ID=`, `OIDC_CLIENT_SECRET=`), with redirect URI
-     `https://<domain>/oauth/callback`.
-   - You also need a wildcard DNS record and certificate for `*.<domain>`
-     on a TLS proxy that forwards to `boxed`'s `-http` address (default
-     `:8080`; `net-setup.sh` only lets the proxy reach it).
-7. **Deploy:** `scripts/deploy.sh <ssh-target>` builds `boxed`, installs it as
-   a new version, and rolls back if it does not come up.
+   - **SSH:** `boxed` joins your [Tailscale](https://tailscale.com) tailnet
+     by itself as the node `boxe` (`-ts-hostname`), so `ssh boxe` and
+     `ssh <vm>.boxe` work from every device on it. Put an auth key in
+     `/etc/boxe/ts-authkey` before the first start, or open the login link
+     that `journalctl -u boxed` shows. Tailscale on the host is not needed.
+     Without Tailscale, set `-ts-hostname= -listen :2222` and give members
+     a `Host boxe` entry with the host's address and `Port 2222` in
+     `~/.ssh/config`.
+   - **Web:** an OIDC client in `/etc/boxe/oidc` (`OIDC_CLIENT_ID=`,
+     `OIDC_CLIENT_SECRET=`), with redirect URI
+     `https://<domain>/oauth/callback`. Any OIDC provider works with
+     `-oidc-email-domains` (verified emails in those domains get in); with
+     Zitadel, `-oidc-org` lets in the users of one organization instead.
+   - DNS records and a certificate for both `<domain>` and `*.<domain>`,
+     on a TLS proxy that forwards them to `boxed`'s `-http` address (default
+     `:8080`; `net-setup.sh` only lets the proxy reach it). With Caddy on
+     the host, for example (the wildcard needs a DNS challenge):
+     ```
+     boxe.example.com, *.boxe.example.com {
+         tls { dns <provider> ... }
+         reverse_proxy 127.0.0.1:8080
+     }
+     ```
+7. **Deploy:** `scripts/deploy.sh <ssh-target>` builds `boxed` (it needs Go
+   where you run it), installs it as a new version over SSH with `sudo`, and
+   rolls back if it does not come up. `boxed` stops at start, saying why, if
+   the kernel, `cloud-hypervisor` or `ch-remote` is missing.
 8. **Backups (optional):** copy `scripts/backup.conf.example` to
-   `/etc/boxe/backup.conf`, install `boxe-backup.sh` and `boxe-restore.sh`, and
-   enable `boxe-backup.timer`.
+   `/etc/boxe/backup.conf`, install `boxe-backup.sh` and `boxe-restore.sh` in
+   `/usr/local/sbin`, install `boxe-backup.service` and `boxe-backup.timer`,
+   and enable the timer.
 
 ## Operations
 
@@ -212,6 +250,10 @@ C8i/M8i/R8i).
   Images are never rebuilt in place, because VMs are clones of them.
   Existing VMs keep their image. Delete an old image once
   `zfs list -o clones` shows no VM uses it.
+- **New guest kernel:** install it under a new name and point `-kernel`
+  at it. Keep the old file until every VM has restarted on the new one
+  (`ssh boxe restart <name>`): a VM started from it needs it to stop or
+  go to sleep.
 - **Other images:** build them from the base image, as
   `image/laravel/Dockerfile` explains, under names like `<name>-<date>`
   (or `<name>-<date>-2` for a second one that day) next to the base
@@ -228,6 +270,12 @@ C8i/M8i/R8i).
     unchanged VM adds a few hundred KB.
   - `boxe-restore.sh <vm>` puts a disk back. Keep the restic password
     somewhere other than the host.
+  - On a new host: install it as above (without starting `boxed`), put
+    back `/etc/boxe/backup.conf`, then
+    `restic restore latest --host boxe --tag state --target /`, move the
+    restored `boxe.db` (under `/tmp`) to `/var/lib/boxe/`, run
+    `boxe-restore.sh <vm>` for every VM and start `boxed`. VMs keep their
+    names, keys and addresses.
 - **People:**
   - Add a GitHub username to `/etc/boxe/users`; it takes effect within 10
     minutes, or right away with `systemctl restart boxed`.
