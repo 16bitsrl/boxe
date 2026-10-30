@@ -25,4 +25,6 @@ ADD --checksum=sha256:d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d9
     https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.xz /tmp/node.tar.xz
 RUN chmod 755 /usr/local/bin/composer && \
     tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --exclude=CHANGELOG.md --exclude=LICENSE --exclude=README.md && \
+    mkdir -p /usr/share/licenses/nodejs && \
+    tar -xJf /tmp/node.tar.xz -C /usr/share/licenses/nodejs --strip-components=1 node-v26.13.0-linux-x64/LICENSE && \
     rm /tmp/node.tar.xz && php --version && composer --version && node --version

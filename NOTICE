@@ -20,3 +20,20 @@ started (port, no exe.dev gateway).
 The image also installs KasmVNC by Kasm Technologies, under the GNU General
 Public License 2.0, unmodified, from its release packages:
 https://github.com/kasmtech/KasmVNC
+The image does not include the KasmVNC source code: whoever distributes a
+built image must also offer the corresponding source of that KasmVNC release,
+as the GPL requires.
+
+The Laravel image (image/laravel/) adds Composer (MIT) and Node.js (MIT and
+others, license kept in /usr/share/licenses/nodejs/LICENSE), unmodified, from
+their official releases.
+
+boxe runs VMs with Cloud Hypervisor (Apache License 2.0 and BSD 3-Clause),
+https://github.com/cloud-hypervisor/cloud-hypervisor, and a Linux kernel built
+from https://github.com/cloud-hypervisor/linux (GNU General Public License
+2.0) with kernel/config-7.2.8-boxe. Neither is included in this repository:
+they are installed separately, as the README explains.
+
+The website (site/) uses the fonts Archivo and JetBrains Mono, under the SIL
+Open Font License 1.1 (site/fonts/OFL-Archivo.txt,
+site/fonts/OFL-JetBrainsMono.txt).
