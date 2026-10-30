@@ -175,10 +175,10 @@ func (b *Box) help(cmd string) string {
     (- as a value reads it from stdin; in the VM: http://<name>.int.SUFFIX/)
   SSH images                            the images new VMs can start from
   SSH llm                               your API keys for the models, used by all your VMs
-  SSH -t llm set <anthropic|openai>     add or change a key (asked for, hidden with -t)
+  SSH llm set <anthropic|openai>        add or change a key (asked for; ssh -t hides it)
   SSH llm usage [--days 30]             tokens and cost of your VMs, per model
-  SSH token new [--label x] [--exp 30d] [--cmds ls,new]
-                                        a token for the HTTPS API (token ls, token rm <id|label>)
+  SSH token new [options]               a token for the HTTPS API (--label x --exp 30d --cmds ls,new)
+  SSH token ls | token rm <id|label>    your tokens; delete one
   SSH ssh-config                        config for ~/.ssh/config
   SSH known-hosts                       line for ~/.ssh/known_hosts
   SSH whoami
