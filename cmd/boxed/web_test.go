@@ -19,7 +19,7 @@ import (
 const testOrg = "org-team"
 
 // testEmails are the members the fake IdP logs in by code, besides alice.
-var testEmails = map[string]string{"bob": "bob@example.com", "admin": "mattia@example.com", "stranger": "stranger@example.com"}
+var testEmails = map[string]string{"bob": "bob@example.com", "admin": "dave@example.com", "stranger": "stranger@example.com"}
 
 // fakeIdP stands in for Zitadel: code "member" logs in a team member,
 // alice, code "outsider" a user of another organization, and the codes in

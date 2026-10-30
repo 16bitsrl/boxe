@@ -59,15 +59,15 @@ func TestAgentFlag(t *testing.T) {
 // the third "admin" for an admin.
 func TestReadUsersWithEmails(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "users")
-	os.WriteFile(p, []byte("# team\nalice alice@example.com\nbob\nmattia mattia@example.com admin\n\n"), 0o644)
+	os.WriteFile(p, []byte("# team\nalice alice@example.com\nbob\ndave dave@example.com admin\n\n"), 0o644)
 	users, emails, admins, err := readUsers(p)
-	if err != nil || strings.Join(users, ",") != "alice,bob,mattia" {
+	if err != nil || strings.Join(users, ",") != "alice,bob,dave" {
 		t.Fatalf("users %v, %v", users, err)
 	}
-	if emails["alice"] != "alice@example.com" || emails["bob"] != "" || emails["mattia"] != "mattia@example.com" {
+	if emails["alice"] != "alice@example.com" || emails["bob"] != "" || emails["dave"] != "dave@example.com" {
 		t.Errorf("emails %v", emails)
 	}
-	if !admins["mattia"] || admins["alice"] || admins["bob"] {
+	if !admins["dave"] || admins["alice"] || admins["bob"] {
 		t.Errorf("admins %v", admins)
 	}
 }

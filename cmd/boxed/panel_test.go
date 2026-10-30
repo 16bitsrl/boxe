@@ -13,22 +13,22 @@ import (
 )
 
 // panelTest is the panel on https://boxe.example with real VMs (on a fake
-// host): alice has test and nap, bob has bobs-vm, mattia, the admin, mine.
+// host): alice has test and nap, bob has bobs-vm, dave, the admin, mine.
 type panelTest struct {
 	*webTest
 	c *cli
 }
 
 func newPanelTest(t *testing.T) *panelTest {
-	c := newCLI(t, "alice", "bob", "mattia")
+	c := newCLI(t, "alice", "bob", "dave")
 	c.box.hv.WebDomain = "boxe.example"
 	c.must("alice", "new test")
 	c.must("alice", "new nap")
 	c.must("bob", "new bobs-vm")
-	c.must("mattia", "new mine")
+	c.must("dave", "new mine")
 	c.box.keys.mu.Lock()
-	c.box.keys.emails = map[string]string{"alice": "alice@example.com", "bob": "bob@example.com", "mattia": "mattia@example.com"}
-	c.box.keys.admins = map[string]bool{"mattia": true}
+	c.box.keys.emails = map[string]string{"alice": "alice@example.com", "bob": "bob@example.com", "dave": "dave@example.com"}
+	c.box.keys.admins = map[string]bool{"dave": true}
 	c.box.keys.byUser = map[string]string{"alice": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice alice@laptop\n"}
 	c.box.keys.mu.Unlock()
 	wt := &webTest{t: t, idp: newFakeIdP(t)}
@@ -420,7 +420,7 @@ func TestPanelHost(t *testing.T) {
 	os.WriteFile(b.backupLast, []byte(fmt.Sprint(start.Add(-40*time.Hour).Unix())), 0o644)
 	os.WriteFile(b.backupStatus, []byte(fmt.Sprintf(`{"start":%d,"end":%d,"failed":["nap"]}`, start.Unix(), start.Add(25*time.Minute).Unix())), 0o644)
 	b.keys.mu.Lock()
-	b.keys.users = []string{"alice", "bob", "mattia", "carol"}
+	b.keys.users = []string{"alice", "bob", "dave", "carol"}
 	b.keys.mu.Unlock()
 
 	member := pt.browser("member")
@@ -443,7 +443,7 @@ func TestPanelHost(t *testing.T) {
 	}
 
 	// With every VM asleep, no dash for the RAM they take.
-	for _, vm := range []string{"alice test", "alice nap", "bob bobs-vm", "mattia mine"} {
+	for _, vm := range []string{"alice test", "alice nap", "bob bobs-vm", "dave mine"} {
 		user, name, _ := strings.Cut(vm, " ")
 		pt.c.must(user, "sleep "+name)
 	}
