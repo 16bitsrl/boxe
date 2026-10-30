@@ -26,8 +26,8 @@ const (
 
 // schedule is what boxe-agent in v says is scheduled, raw; empty if it
 // cannot tell (an older image).
-func (b *Box) schedule(v VM) string {
-	answer, err := b.hv.ask(v.Name, "schedule", 5*time.Second)
+func (b *Box) schedule(v VM, timeout time.Duration) string {
+	answer, err := b.hv.ask(v.Name, "schedule", timeout)
 	if err != nil && !strings.Contains(err.Error(), "unknown command") && !errors.Is(err, errAgentUnreachable) {
 		log.Printf("%s: schedule of %s: %v", v.Owner, v.Name, err)
 	}

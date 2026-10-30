@@ -32,6 +32,7 @@ type fakeHost struct {
 	agentErr  map[string]string                // command -> error boxe-agent answers
 	hangUp    map[string]int                   // "vm command" -> times boxe-agent hangs up without answering
 	schedule  map[string]string                // vm -> what boxe-agent answers to schedule, after ok
+	stall     chan struct{}                    // if set, boxe-agent answers schedule once it is closed
 	noShelley bool                             // Shelley in the VM does not answer
 	noModels  bool                             // nobody added a model to Shelley yet
 	origin    map[string]string                // clone -> snapshot it was made from
@@ -78,6 +79,12 @@ func (f *fakeHost) dial(network, addr string, _ time.Duration) (net.Conn, error)
 			f.mu.Unlock()
 			return
 		}
+		stall := f.stall
+		f.mu.Unlock()
+		if stall != nil && cmd == "schedule" {
+			<-stall
+		}
+		f.mu.Lock()
 		reply := "ok"
 		if cmd == "schedule" {
 			reply += "\n" + strings.TrimSuffix(f.schedule[vm], "\n")

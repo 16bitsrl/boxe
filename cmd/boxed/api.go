@@ -138,6 +138,9 @@ func (b *Box) tokenNew(o output, user string, args []string) error {
 			}
 		}
 	}
+	// Under the lock: two at once could otherwise get the same label.
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	list, err := b.store.Tokens(user)
 	if err != nil {
 		return err

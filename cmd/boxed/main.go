@@ -162,7 +162,9 @@ func main() {
 			b.llm = newGateway(store, *llmAddr)
 			b.hv.LLMGateway = b.llm.URL()
 			srv := &http.Server{Handler: b.llm, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, ConnContext: b.llm.ConnContext}
-			go func() { log.Printf("LLM gateway stopped: %v", srv.Serve(ln)) }()
+			go func() {
+				log.Printf("LLM gateway stopped: %v", srv.Serve(limitListener(ln, newLimiter(vmConns, 16*vmConns))))
+			}()
 		}
 	}
 
@@ -190,7 +192,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		go func() { log.Fatal(serve(ln)) }()
+		go func() { log.Fatal(serve(limitListener(ln, newLimiter(vmConns, 16*vmConns)))) }()
 	}
 	go b.ReapLoop(time.Minute)
 	go b.SleepLoop(time.Minute)
@@ -273,6 +275,11 @@ func sshListeners(stateDir, tsName, listen string) []net.Listener {
 	}
 	return lns
 }
+
+// vmConns is how many connections a VM may keep open to each of boxed's
+// listeners on the gateway (DNS, integrations, LLM gateway): one VM cannot
+// take the host's memory or file descriptors.
+const vmConns = 64
 
 // readAuthKey is only needed for the first login of the tsnet node.
 func readAuthKey() string {

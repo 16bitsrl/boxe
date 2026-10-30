@@ -10,6 +10,7 @@ import (
 	"net/http/cgi"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -587,6 +588,7 @@ func TestProxyHidesTheTargetInAnswers(t *testing.T) {
 		w.Header().Set("Content-Location", "/services/T0/B0/xyz")
 		w.Header().Set("Link", "<http://"+host+"/services/T0/B0/xyz/more>; rel=next")
 		w.Header().Set("Refresh", "0; url=/services/T0/B0/xyz/again")
+		w.Header().Set("Set-Cookie", "s=1; Path=/services/T0/B0/xyz")
 		w.WriteHeader(http.StatusMovedPermanently)
 	}))
 	defer up.Close()
@@ -611,5 +613,15 @@ func TestProxyHidesTheTargetInAnswers(t *testing.T) {
 	}
 	if l := res.Header.Get("Link"); l != "<http://slack.int.boxe/more>; rel=next" {
 		t.Errorf("Link %q", l)
+	}
+}
+
+// Redirects to other hosts are left alone, even with a path like the target's.
+func TestHideTargetLeavesOtherHosts(t *testing.T) {
+	u, _ := url.Parse("https://hooks.example/services/x")
+	h := http.Header{"Location": {"https://other.example/services/x/y"}}
+	hideTarget(h, u, "http://hook.int.boxe")
+	if l := h.Get("Location"); l != "https://other.example/services/x/y" {
+		t.Errorf("Location %q", l)
 	}
 }

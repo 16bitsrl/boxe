@@ -346,20 +346,23 @@ func (b *Box) sleepIdle(now time.Time) {
 // sleep already: a wake may have made room with it. A VM with a job due
 // soon stays awake for it.
 func (b *Box) sleepIfIdle(v VM, now time.Time) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	// The front and boxe-agent first, without b.mu: a VM that keeps its
+	// agent from answering must not hold up everyone else. A connection
+	// opened meanwhile marks the VM used, which is checked again below.
 	if !b.syncFront(now) {
 		return
 	}
+	schedule := b.schedule(v, 5*time.Second)
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.actMu.Lock()
 	a := b.act[v.Name]
 	idle, job := b.idle(a, now), a != nil && !a.job.IsZero()
 	b.actMu.Unlock()
 	cur, err := b.store.Get(v.Name)
-	if !idle || err != nil || cur.Index != v.Index || cur.KeepAwake || b.hv.State(v.Name) != "running" {
+	if !idle || err != nil || !cur.same(v) || cur.Name != v.Name || cur.KeepAwake || b.hv.State(v.Name) != "running" {
 		return
 	}
-	schedule := b.schedule(cur)
 	if next, _ := nextJob(schedule, now); !next.IsZero() && next.Sub(now) < minNap {
 		return
 	}
@@ -498,7 +501,8 @@ func (b *Box) makeRoom(v VM) error {
 		if b.hv.State(o.Name) != "running" {
 			continue
 		}
-		if err := b.sleep(o, b.schedule(o), time.Now()); err != nil {
+		// Under b.mu: boxe-agent gets little time.
+		if err := b.sleep(o, b.schedule(o, time.Second), time.Now()); err != nil {
 			log.Printf("%s: sleep %s: %v", o.Owner, o.Name, err)
 			continue
 		}
@@ -517,14 +521,21 @@ func (b *Box) cmdSleep(o output, user string, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: ssh %s sleep <name>", b.name)
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.mu.RLock()
 	v, err := b.owned(user, args[0])
+	b.mu.RUnlock()
 	if err != nil {
 		return err
 	}
+	// What is scheduled in it before b.mu, as in sleepIfIdle.
+	schedule := b.schedule(v, 5*time.Second)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if cur, err := b.owned(user, v.Name); err != nil || !cur.same(v) {
+		return fmt.Errorf("%s changed meanwhile: try again", v.Name)
+	}
 	now := time.Now()
-	if err := b.sleep(v, b.schedule(v), now); err != nil {
+	if err := b.sleep(v, schedule, now); err != nil {
 		log.Printf("%s: sleep %s: %v", user, v.Name, err)
 		return hostErrorf("could not put %s to sleep: %v", v.Name, err)
 	}

@@ -503,3 +503,18 @@ func TestSplitRestartRevalidates(t *testing.T) {
 		t.Errorf("jump still open after a restart without the key: %q", line)
 	}
 }
+
+// The sockets' directory is root's only, but its parent, created with it
+// after a reboot, stays open: the hypervisors reach /run/boxe/vm through it.
+func TestSocketDirLeavesTheParentOpen(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "boxe", "front")
+	if err := socketDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	for p, want := range map[string]os.FileMode{filepath.Dir(dir): 0o755, dir: 0o700} {
+		if st, err := os.Stat(p); err != nil || st.Mode().Perm() != want {
+			t.Errorf("%s: %v %v, want %o", p, st.Mode().Perm(), err, want)
+		}
+	}
+}

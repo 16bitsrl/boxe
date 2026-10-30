@@ -36,7 +36,7 @@ type server interface {
 
 // serveBackend serves the front on the sockets in dir; web nil: no web.
 func serveBackend(b *Box, web *Web, dir string) (*backend, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := socketDir(dir); err != nil {
 		return nil, err
 	}
 	// The front connects as root, which may be anyone: any host key will do.
@@ -85,6 +85,20 @@ func (be *backend) Close() {
 	for _, s := range be.servers {
 		s.Close()
 	}
+}
+
+// socketDir makes the directory of the front's and boxed's sockets, root's
+// only. Its parent, made with it on a fresh /run, stays open to all:
+// /run/boxe also holds the VMs' directories, which their hypervisors (not
+// root) must reach.
+func socketDir(dir string) error {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	return os.Chmod(dir, 0o700)
 }
 
 // listenUnix listens on a socket only root can connect to.

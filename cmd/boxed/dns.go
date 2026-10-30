@@ -23,20 +23,30 @@ type DNS struct {
 	Closed   func(ip netip.Addr) bool // the VM at ip may resolve only integrations
 }
 
+// ServeUDP answers queries, at most dnsPerVM at a time for each VM: a VM
+// that floods it loses its extra queries, as on a busy network.
 func (d *DNS) ServeUDP(pc net.PacketConn) error {
+	busy := newLimiter(dnsPerVM, 16*dnsPerVM)
 	for {
 		buf := make([]byte, 4096)
 		n, addr, err := pc.ReadFrom(buf)
 		if err != nil {
 			return err
 		}
+		ip := addrIP(addr)
+		if !busy.take(ip) {
+			continue
+		}
 		go func() {
-			if out := d.answer(buf[:n], addrIP(addr), false); out != nil {
+			defer busy.done(ip)
+			if out := d.answer(buf[:n], ip, false); out != nil {
 				pc.WriteTo(out, addr)
 			}
 		}()
 	}
 }
+
+const dnsPerVM = 64
 
 func (d *DNS) ServeTCP(ln net.Listener) error {
 	for {

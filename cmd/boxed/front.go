@@ -99,7 +99,7 @@ func runFront(dir, stateDir, tsName, listen, httpAddr string) {
 	if dir == "" {
 		log.Fatal("-front needs -sockets")
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := socketDir(dir); err != nil {
 		log.Fatal(err)
 	}
 	f := newFront(dir)

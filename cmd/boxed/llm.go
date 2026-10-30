@@ -167,7 +167,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer g.end(v)
 	if v.Egress == egressIntegrations && r.Method != http.MethodGet && r.Method != http.MethodHead {
-		if err := noWebTools(r); err != nil {
+		if err := noWebTools(r, clean); err != nil {
 			http.Error(w, "boxe gateway: "+err.Error(), http.StatusForbidden)
 			return
 		}
@@ -266,13 +266,19 @@ func (g *Gateway) proxy(p llmProvider, v VM, key string) http.Handler {
 // the VM (search, fetch, MCP servers): a VM restricted to its integrations
 // would reach the internet through them. It reads the body, up to
 // requestLimit, and puts it back.
-func noWebTools(r *http.Request) error {
+func noWebTools(r *http.Request, path string) error {
 	body, err := io.ReadAll(io.LimitReader(r.Body, requestLimit+1))
 	r.Body.Close()
 	if err != nil || len(body) > requestLimit {
 		return errors.New("this VM reaches only its integrations: requests over 4 MiB cannot be checked for web tools")
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
+	if len(body) == 0 {
+		return nil // nothing to ask for: a DELETE, say
+	}
+	if !restrictedEndpoints[path] {
+		return errors.New("this VM reaches only its integrations: only the messages, chat completions, responses and embeddings endpoints are on")
+	}
 	var req struct {
 		Model            string
 		Tools            []struct{ Type string }
@@ -291,7 +297,49 @@ func noWebTools(r *http.Request) error {
 	if !ok {
 		return errors.New("this VM reaches only its integrations, so only tools that run in the VM are on: no web search, web fetch, MCP servers, code run at the provider, nor search models (ssh boxe egress)")
 	}
+	var all any
+	json.Unmarshal(body, &all)
+	if fetchesURL(all) {
+		return errors.New("this VM reaches only its integrations, so the provider may not fetch URLs for it: send images and documents inline (base64)")
+	}
 	return nil
+}
+
+// restrictedEndpoints are what a VM restricted to its integrations may post
+// to: one request each, whose tools and sources noWebTools checks. Not
+// batches, files or anything else that nests or stores requests.
+var restrictedEndpoints = map[string]bool{
+	"/anthropic/v1/messages": true, "/anthropic/v1/messages/count_tokens": true,
+	"/openai/chat/completions": true, "/openai/responses": true, "/openai/embeddings": true,
+}
+
+// fetchesURL says whether a request, decoded, has the provider fetch a URL:
+// an Anthropic source of type url, or an OpenAI image_url, file_url or url
+// that is http(s).
+func fetchesURL(v any) bool {
+	switch v := v.(type) {
+	case map[string]any:
+		if v["type"] == "url" {
+			return true
+		}
+		for k, x := range v {
+			if s, ok := x.(string); ok && (k == "url" || k == "image_url" || k == "file_url" || k == "server_url") {
+				if l := strings.ToLower(s); strings.HasPrefix(l, "http:") || strings.HasPrefix(l, "https:") {
+					return true
+				}
+			}
+			if fetchesURL(x) {
+				return true
+			}
+		}
+	case []any:
+		for _, x := range v {
+			if fetchesURL(x) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // clientTool says whether a tool of type typ runs in the VM: a function

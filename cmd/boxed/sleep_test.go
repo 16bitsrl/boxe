@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -534,4 +535,40 @@ func TestJobWakeRetries(t *testing.T) {
 	if s := b.hv.State("a1"); s != "running" {
 		t.Errorf("a1 %s on the second try", s)
 	}
+}
+
+// A VM whose boxe-agent is slow to say what is scheduled does not hold up
+// the others: boxed asks it without the lock on the VMs.
+func TestSlowAgentDoesNotHoldTheLock(t *testing.T) {
+	c := newCLI(t, "alice")
+	b := c.box
+	b.sleepAfter = time.Minute
+	c.must("alice", "new test")
+	b.sleepIdle(time.Now()) // the first reading
+	c.host.stall = make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		b.sleepIdle(time.Now().Add(time.Hour))
+		close(done)
+	}()
+	for !c.host.ranAgent("test schedule") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !b.mu.TryLock() {
+		t.Error("the lock is held while boxe-agent answers")
+	} else {
+		b.mu.Unlock()
+	}
+	close(c.host.stall)
+	<-done
+	if s := b.hv.State("test"); s != "sleeping" {
+		t.Errorf("test %s", s)
+	}
+}
+
+// ranAgent says whether boxe-agent got cmd, as "<vm> <command>".
+func (f *fakeHost) ranAgent(cmd string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.agent, cmd)
 }

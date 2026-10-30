@@ -618,6 +618,13 @@ func TestGatewayRestrictedVMHasNoWebTools(t *testing.T) {
 		{"/openai/responses", `{"model":"m","tools":[{"type":"namespace","tools":[{"type":"web_search"}]}]}`},
 		{"/openai/chat/completions", `{"model":"gpt-5-search-api","messages":[]}`},
 		{"/anthropic/v1/messages", `{"model":"m","tools":[{"type":"code_execution_20250825","name":"code_execution"}]}`},
+		// Batches nest the same requests; the provider fetches URL sources.
+		{"/anthropic/v1/messages/batches", `{"requests":[{"custom_id":"a","params":{"model":"m","tools":[{"type":"web_search_20250305","name":"web_search"}]}}]}`},
+		{"/anthropic/v1/messages", `{"model":"m","messages":[{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://example.com/x?data=secret"}}]}]}`},
+		{"/anthropic/v1/messages", `{"model":"m","messages":[{"role":"user","content":[{"type":"document","source":{"type":"url","url":"http://example.com/d.pdf"}}]}]}`},
+		{"/openai/chat/completions", `{"model":"m","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/i.png"}}]}]}`},
+		{"/openai/responses", `{"model":"m","input":[{"role":"user","content":[{"type":"input_file","file_url":"https://example.com/f.pdf"}]}]}`},
+		{"/openai/responses", `{"model":"m","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/i.png"}]}]}`},
 	} {
 		if w := llmRequest(g, "10.42.0.2", "POST", req.path, req.body, nil); w.Code != http.StatusForbidden {
 			t.Errorf("%s %s: %d", req.path, req.body, w.Code)
@@ -630,6 +637,13 @@ func TestGatewayRestrictedVMHasNoWebTools(t *testing.T) {
 		if w := llmRequest(g, "10.42.0.2", "POST", "/anthropic/v1/messages", ok, nil); w.Code != 200 {
 			t.Errorf("client tools %s: %d %s", ok, w.Code, w.Body)
 		}
+	}
+	inline := `{"model":"m","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBO"}},{"type":"text","text":"see https://example.com"}]}]}`
+	if w := llmRequest(g, "10.42.0.2", "POST", "/anthropic/v1/messages", inline, nil); w.Code != 200 {
+		t.Errorf("an inline image and a URL in the text: %d %s", w.Code, w.Body)
+	}
+	if w := llmRequest(g, "10.42.0.2", "DELETE", "/openai/responses/resp_1", ``, nil); w.Code != 200 {
+		t.Errorf("a request without a body: %d %s", w.Code, w.Body)
 	}
 	if w := llmRequest(g, "10.42.0.2", "POST", "/openai/responses", `{"model":"m","tools":[{"type":"function","name":"f"}]}`, nil); w.Code != 200 {
 		t.Errorf("a function tool: %d %s", w.Code, w.Body)

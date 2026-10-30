@@ -490,13 +490,16 @@ func hideTarget(h http.Header, target *url.URL, base string) {
 	if path == "" {
 		return
 	}
-	for _, k := range []string{"Location", "Content-Location", "Link", "Refresh"} {
+	for _, k := range []string{"Location", "Content-Location", "Link", "Refresh", "Set-Cookie"} {
 		for i, v := range h.Values(k) {
 			for _, scheme := range []string{"https://", "http://"} {
 				v = strings.ReplaceAll(v, scheme+target.Host+path, base)
 			}
-			if v = strings.ReplaceAll(v, path, ""); v == "" {
-				v = "/"
+			// A path of the target's own host; other hosts' URLs stay.
+			if !strings.Contains(v, "://") || strings.Contains(v, "://"+target.Host+"/") {
+				if v = strings.ReplaceAll(v, path, ""); v == "" {
+					v = "/"
+				}
 			}
 			h[http.CanonicalHeaderKey(k)][i] = v
 		}
