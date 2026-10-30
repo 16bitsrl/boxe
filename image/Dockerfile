@@ -32,6 +32,13 @@ COPY shelley-service.conf /etc/systemd/system/shelley.service.d/boxe.conf
 RUN chmod 755 /usr/local/bin/shelley && \
     install -d -o 1000 -g 1000 /home/exedev/.config/shelley && \
     systemctl enable shelley.socket
+# exe-scroll (MIT, by exe.dev): terminal sessions that survive a dropped
+# connection, with scrollback; `scroll [name]` attaches or starts one.
+ADD --checksum=sha256:56e80a95f63765aa4e3cadcac704f20cabfe848696e0d70f55e1f73664e93f4e \
+    https://github.com/boldsoftware/exe.dev/releases/download/exe-scroll/v0.16.92023324/exe-scroll-linux-amd64 /usr/local/bin/exe-scroll
+COPY scroll /usr/local/bin/scroll
+COPY exe-scroll-LICENSE /usr/share/doc/exe-scroll/LICENSE
+RUN chmod 755 /usr/local/bin/exe-scroll /usr/local/bin/scroll
 # A desktop with a browser, for agents that try UIs while their user watches:
 # KasmVNC (an X server that is also the desktop in the browser), openbox,
 # xterm, Google Chrome (the browser agents' tools use by default), at

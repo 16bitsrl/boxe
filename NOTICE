@@ -17,6 +17,12 @@ The image also includes Shelley by Bold Software, under the Apache License
 image/shelley-socket.conf and image/shelley-service.conf change how it is
 started (port, no exe.dev gateway).
 
+The image also includes exe-scroll by exe.dev, under the MIT License,
+unmodified, from its release binaries:
+https://github.com/boldsoftware/exe.dev/tree/main/exe-scroll
+Its license is in image/exe-scroll-LICENSE, and in the image at
+/usr/share/doc/exe-scroll/LICENSE. image/scroll is ours.
+
 The image also installs KasmVNC by Kasm Technologies, under the GNU General
 Public License 2.0, unmodified, from its release packages:
 https://github.com/kasmtech/KasmVNC

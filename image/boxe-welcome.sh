@@ -16,6 +16,7 @@ if [[ $- == *i* ]]; then
         echo "Cron jobs and systemd timers still run: it wakes up for them. For a"
         echo "server that must answer at once: ssh boxe keep-awake $_name on"
     fi
+    echo "A session that survives a dropped connection: ssh -t $_name.boxe scroll"
     echo 'Docker works: docker run --rm alpine echo hello'
     echo 'Manage your VMs from your computer: ssh boxe help'
     echo ""

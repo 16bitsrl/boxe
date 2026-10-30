@@ -1,0 +1,13 @@
+#!/bin/bash
+# scroll [name]: a terminal session that survives a dropped SSH connection,
+# with its scrollback. Attaches to the session called name (default: main),
+# or starts it. Detach by closing the connection; run scroll again to come back.
+# Programs and agents can drive a session without attaching:
+#   exe-scroll send-keys ~/.local/state/scroll/main.sock 'make test' Enter
+#   exe-scroll capture-pane ~/.local/state/scroll/main.sock
+set -euo pipefail
+name=${1:-main}
+[[ $name =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "usage: scroll [name]" >&2; exit 2; }
+dir=${XDG_STATE_HOME:-$HOME/.local/state}/scroll
+mkdir -p "$dir"
+exec /usr/local/bin/exe-scroll "$dir/$name.sock"
