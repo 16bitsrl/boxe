@@ -145,6 +145,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only the provider's API: no dots out of it.
 	clean := path.Clean(r.URL.Path)
+	if strings.HasSuffix(r.URL.Path, "/") && clean != "/" {
+		clean += "/" // as the provider's API may want it
+	}
 	name, _, _ := strings.Cut(strings.TrimPrefix(clean, "/"), "/")
 	p, ok := llmProviderNamed(name)
 	if !ok || clean != r.URL.Path || strings.Contains(r.URL.RawPath, "%2") || strings.Contains(r.URL.RawPath, "%5") {
@@ -423,6 +426,10 @@ type meter struct {
 	once   sync.Once
 	record func(llmUsage)
 }
+
+// llmUsageMaxAge is how long the models' usage is kept: a year and more,
+// to compare with the providers' invoices.
+const llmUsageMaxAge = 400 * 24 * time.Hour
 
 // requestLimit is the largest request body the gateway reads (to ask for
 // usage), meterLimit the largest JSON answer or event it reads the tokens

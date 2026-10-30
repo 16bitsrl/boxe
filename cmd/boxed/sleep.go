@@ -428,6 +428,9 @@ func (b *Box) sample(now time.Time) {
 	if err := b.store.PruneSamples(now.Add(-sampleMaxAge)); err != nil {
 		log.Printf("sample: %v", err)
 	}
+	if err := b.store.PruneLLMUsage(now.Add(-llmUsageMaxAge)); err != nil {
+		log.Printf("sample: %v", err)
+	}
 }
 
 // wake wakes the VM named name if it sleeps, and waits for its SSH server.

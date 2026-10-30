@@ -6,8 +6,9 @@
 # reload, and only chains of ours are rewritten.
 set -euo pipefail
 if [ -r /etc/boxe/net.conf ]; then . /etc/boxe/net.conf; fi
-SUBNET=${BOXE_SUBNET:-10.42.0.0/16}
-GATEWAY=${BOXE_GATEWAY:-10.42.0.1/16}
+# Fixed: boxed gives VMs their addresses in it and listens on the gateway.
+SUBNET=10.42.0.0/16
+GATEWAY=10.42.0.1/16
 GW=${GATEWAY%/*}   # boxed listens here for the VMs: integrations (80) and DNS (53)
 PROXY=${BOXE_PROXY:-}   # the only remote client of boxed's web port (the TLS proxy); empty: local only
 WEB_PORT=${BOXE_WEB_PORT:-8080}

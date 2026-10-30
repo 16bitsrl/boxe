@@ -252,7 +252,7 @@ func timeCol(t time.Time) string {
 }
 
 // Delete forgets the VM, its share links, integrations and usage: a new VM
-// with the same name must not inherit them.
+// with the same name must not inherit them. Its models' usage is kept apart.
 func (s *Store) Delete(name string) error {
 	if _, err := s.Unshare(name); err != nil {
 		return err
@@ -261,6 +261,11 @@ func (s *Store) Delete(name string) error {
 		return err
 	}
 	if _, err := s.db.Exec("DELETE FROM samples WHERE vm = ?", name); err != nil {
+		return err
+	}
+	// What its models cost stays, under a name no new VM can have.
+	if _, err := s.db.Exec("UPDATE llm_usage SET vm = vm || ? WHERE vm = ?",
+		" (deleted "+time.Now().UTC().Format("2006-01-02 15:04")+")", name); err != nil {
 		return err
 	}
 	_, err := s.db.Exec("DELETE FROM vms WHERE name = ?", name)
@@ -479,6 +484,12 @@ func (s *Store) DeleteLLMKey(user, provider string) error {
 func (s *Store) AddLLMUsage(at time.Time, user, vm, provider string, u llmUsage, cost *float64) error {
 	_, err := s.db.Exec(`INSERT INTO llm_usage (at, user, vm, provider, model, input, output, cache_read, cache_write, cost)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, at.Unix(), user, vm, provider, u.Model, u.Input, u.Output, u.CacheRead, u.CacheWrite, cost)
+	return err
+}
+
+// PruneLLMUsage forgets the usage from before t.
+func (s *Store) PruneLLMUsage(t time.Time) error {
+	_, err := s.db.Exec("DELETE FROM llm_usage WHERE at < ?", t.Unix())
 	return err
 }
 

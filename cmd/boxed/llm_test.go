@@ -686,3 +686,50 @@ func TestGatewayPinsTheConnection(t *testing.T) {
 		t.Errorf("a new connection of the new VM: %d %s", w.Code, w.Body)
 	}
 }
+
+// The usage of a deleted VM stays, under a name of its own: a new VM with
+// the same name starts from nothing. Usage older than llmUsageMaxAge goes.
+func TestLLMUsageOfDeletedAndOldVMs(t *testing.T) {
+	c, _, _ := llmCLI(t, "alice")
+	st := c.box.store
+	c.must("alice", "new test")
+	now := time.Now()
+	st.AddLLMUsage(now, "alice", "test", "anthropic", llmUsage{Model: "m", Input: 10}, nil)
+	st.AddLLMUsage(now.Add(-llmUsageMaxAge-time.Hour), "alice", "test", "anthropic", llmUsage{Model: "m", Input: 1}, nil)
+	c.must("alice", "rm test")
+	c.must("alice", "new test")
+	st.AddLLMUsage(now, "alice", "test", "anthropic", llmUsage{Model: "m", Input: 5}, nil)
+	if err := st.PruneLLMUsage(now.Add(-llmUsageMaxAge)); err != nil {
+		t.Fatal(err)
+	}
+	list, err := st.LLMUsage("alice", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int64{}
+	for _, u := range list {
+		got[u.VM] += u.Input
+	}
+	if len(got) != 2 || got["test"] != 5 {
+		t.Fatalf("usage %v", got)
+	}
+	for vm, n := range got {
+		if vm != "test" && (!strings.HasPrefix(vm, "test (deleted ") || n != 10) {
+			t.Errorf("deleted VM's usage: %q %d", vm, n)
+		}
+	}
+}
+
+// A path that ends in a slash is still in the provider's API.
+func TestGatewayTrailingSlash(t *testing.T) {
+	c, anthropic, _ := llmCLI(t, "alice")
+	c.must("alice", "new test")
+	c.setKey("alice", "anthropic", "sk-ant-alice")
+	anthropic.answer = `{}`
+	if w := llmRequest(c.box.llm, "10.42.0.2", "GET", "/anthropic/v1/models/", "", nil); w.Code != 200 {
+		t.Errorf("trailing slash: %d %s", w.Code, w.Body)
+	}
+	if r, _ := anthropic.last(); r == nil || r.URL.Path != "/v1/models/" {
+		t.Errorf("upstream got %v", r)
+	}
+}

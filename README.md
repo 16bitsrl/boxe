@@ -354,7 +354,8 @@ C8i/M8i/R8i).
    - `useradd --system --no-create-home --shell /usr/sbin/nologin boxe-vm`.
    - Install `scripts/net-setup.sh` in `/usr/local/sbin`, with
      `/etc/boxe/net.conf` setting `BOXE_PROXY=<proxy IP>` if the TLS proxy is
-     another machine.
+     another machine. The VMs' network is always `10.42.0.0/16` on `br0`:
+     it must not be in use on the host already.
    - Generate a key pair for the host to reach VMs:
      `ssh-keygen -t ed25519 -N '' -f /etc/boxe/id_ed25519`.
    - List the team in `/etc/boxe/users` (see `scripts/users.example`): a
