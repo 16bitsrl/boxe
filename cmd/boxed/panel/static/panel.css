@@ -115,6 +115,33 @@ button.danger:hover { background: #9c271f; }
 .card > .facts:first-child, .card > .cols:first-child > .facts { margin-top: 0; }
 .muted { color: var(--muted); }
 .problems { margin: 6px 0 0; padding-left: 20px; }
+.detail .usage-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; border-top: 1px solid var(--rule); margin-top: 22px; padding-top: 18px; }
+.detail .usage-head h2 { border: 0; padding: 0; margin: 0; }
+.ranges { display: flex; font: 13px var(--mono); }
+.ranges a { padding: 3px 10px; border: 1px solid var(--rule); text-decoration: none; }
+.ranges a + a { border-left: 0; }
+.ranges a:hover { background: var(--paper); }
+.ranges a[aria-current] { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; margin-top: 16px; }
+.chart { margin: 0; }
+.chart figcaption { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.chart h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.chart figcaption span { color: var(--muted); font: 12px/1.5 var(--mono); }
+.plot { position: relative; height: 96px; }
+.plot:focus-visible { outline: 2px solid var(--red); outline-offset: 4px; }
+.plot svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.plot .grid, .plot .base { stroke-width: 1; vector-effect: non-scaling-stroke; }
+.plot .grid { stroke: var(--rule); }
+.plot .base { stroke: var(--muted); }
+.plot .area { fill: var(--ink); fill-opacity: .08; }
+.plot .line { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.plot .dots { fill: none; stroke: var(--ink); stroke-width: 7; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.plot .scale { position: absolute; top: 3px; left: 0; padding-right: 4px; background: var(--card); font: 11px/1.2 var(--mono); color: var(--muted); }
+.plot .cross { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ink); pointer-events: none; }
+.plot .tip { position: absolute; bottom: calc(100% + 4px); padding: 3px 7px; background: var(--ink); color: var(--paper); font: 12px/1.4 var(--mono); white-space: nowrap; pointer-events: none; }
+.chart.reading figcaption span { visibility: hidden; }
+.plot .tip b { font-weight: 700; margin-right: 6px; }
+.chart .axis { display: flex; justify-content: space-between; margin-top: 4px; font: 11px/1.4 var(--mono); color: var(--muted); }
 .keys { list-style: none; padding: 0; margin: 10px 0 0; }
 .keys li { padding: 6px 0; border-top: 1px solid var(--rule); overflow-wrap: anywhere; }
 
@@ -122,6 +149,7 @@ button.danger:hover { background: #9c271f; }
   h1 { font-size: 32px; }
   .top nav { gap: 14px; }
   .cols { grid-template-columns: 1fr; }
+  .charts { grid-template-columns: 1fr; }
   table.vms, .vms tbody, .vms tr, .vms td { display: block; }
   .vms thead { display: none; }
   .vms tr { display: grid; grid-template-columns: repeat(3, auto) 1fr; gap: 6px 14px; padding: 12px 6px; border-bottom: 1px solid var(--rule); }

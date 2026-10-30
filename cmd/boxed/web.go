@@ -49,6 +49,7 @@ type Web struct {
 	// restart and remove a VM of user, any VM for an admin.
 	restart, remove func(user string, admin bool, name string) error
 	host            func() hostInfo // for admins
+	samples         func(vm string, since time.Time) ([]Sample, error)
 
 	mu  sync.Mutex
 	idp struct{ Auth, Token, Userinfo string } // from discovery, on first use

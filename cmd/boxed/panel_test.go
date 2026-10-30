@@ -451,3 +451,46 @@ func TestPanelHost(t *testing.T) {
 		t.Errorf("no VM awake:\n%s", page)
 	}
 }
+
+// The page of a VM charts what it used over the last 24 hours, 7 or 30 days,
+// from the samples of every minute.
+func TestPanelUsageCharts(t *testing.T) {
+	pt := newPanelTest(t)
+	now := time.Now()
+	for _, s := range []Sample{
+		{At: now.Add(-3 * 24 * time.Hour), CPU: 190, Mem: 900 << 20, Disk: 6 << 30},
+		{At: now.Add(-2 * time.Hour), CPU: 40, Mem: 600 << 20, Disk: 5 << 30},
+		{At: now.Add(-time.Hour), CPU: 80, Mem: 700 << 20, Disk: 5 << 30},
+	} {
+		if err := pt.c.box.store.AddSample("test", s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	member := pt.browser("member")
+	code, page := member.page("/vm/test")
+	if code != 200 {
+		t.Fatalf("%d:\n%s", code, page)
+	}
+	for _, want := range []string{`href="/vm/test?range=24h" aria-current="page"`, `href="/vm/test?range=7d"`, `href="/vm/test?range=30d"`,
+		"<h3>CPU</h3>", "<h3>RAM</h3>", "<h3>Disk</h3>", `class="line"`, "peak 80%", "peak 700M", "200%",
+		`class="dots" d="M`} { // two samples an hour apart: two lone points
+		if !strings.Contains(page, want) {
+			t.Errorf("24h: no %q in:\n%s", want, page)
+		}
+	}
+	if strings.Contains(page, "190%") {
+		t.Errorf("24h shows a sample of 3 days ago")
+	}
+	_, page = member.page("/vm/test?range=7d")
+	for _, want := range []string{`href="/vm/test?range=7d" aria-current="page"`, "peak 190%", "peak 900M"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("7d: no %q in:\n%s", want, page)
+		}
+	}
+	if _, page := member.page("/vm/test?range=1y"); !strings.Contains(page, `href="/vm/test?range=24h" aria-current="page"`) {
+		t.Errorf("an unknown range is not 24h:\n%s", page)
+	}
+	if _, page := member.page("/vm/nap"); !strings.Contains(page, "Nothing recorded yet") || strings.Contains(page, `class="line"`) {
+		t.Errorf("a VM without samples:\n%s", page)
+	}
+}

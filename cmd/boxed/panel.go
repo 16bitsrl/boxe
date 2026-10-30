@@ -78,6 +78,7 @@ func (b *Box) panel(w *Web) {
 		return err
 	}
 	w.host = b.hostInfo
+	w.samples = b.store.Samples
 	w.remove = func(user string, admin bool, name string) error {
 		_, err := b.remove(user, admin, name)
 		return err
@@ -101,6 +102,7 @@ type panelPage struct {
 	CSRF    string      // the token of the session, for forms
 	Error   string      // what went wrong with the last form
 	Host    hostInfo    // for an admin
+	Usage   usage       // of VM
 	Keys    []string
 	Message string
 	Logout  bool      // the message offers to log out
@@ -182,7 +184,7 @@ func (w *Web) servePanel(rw http.ResponseWriter, r *http.Request) {
 		p.Title, p.Nav, p.Host = "Host", "host", w.host()
 		w.render(rw, http.StatusOK, "host", p)
 	case strings.HasPrefix(path, "/vm/"):
-		w.vmDetail(rw, p, strings.TrimPrefix(path, "/vm/"))
+		w.vmDetail(rw, p, strings.TrimPrefix(path, "/vm/"), r.URL.Query().Get("range"))
 	default:
 		w.notFound(rw, p)
 	}
@@ -250,14 +252,24 @@ func (w *Web) find(rw http.ResponseWriter, p panelPage, name string) (vmJSON, bo
 	return vmJSON{}, false
 }
 
-func (w *Web) vmDetail(rw http.ResponseWriter, p panelPage, name string) {
+func (w *Web) vmDetail(rw http.ResponseWriter, p panelPage, name, rng string) {
 	if v, ok := w.find(rw, p, name); ok {
-		w.vmPage(rw, http.StatusOK, p, v)
+		w.vmPage(rw, http.StatusOK, p, v, rng)
 	}
 }
 
-func (w *Web) vmPage(rw http.ResponseWriter, status int, p panelPage, v vmJSON) {
+// vmPage is the page of v, with its usage over rng (see usageOf).
+func (w *Web) vmPage(rw http.ResponseWriter, status int, p panelPage, v vmJSON, rng string) {
 	p.Title, p.Nav, p.VM = v.Name, "vms", v
+	if _, ok := usageRanges[rng]; !ok {
+		rng = "24h"
+	}
+	now := time.Now()
+	samples, err := w.samples(v.Name, now.Add(-usageRanges[rng]))
+	if err != nil {
+		log.Printf("web: panel: samples of %s: %v", v.Name, err)
+	}
+	p.Usage = usageOf(v, samples, rng, now)
 	host := func(label string) string { return "https://" + label + "." + w.cfg.Domain }
 	p.Links = []panelLink{{"Web", host(v.Name)}}
 	if v.Owner == p.User {
@@ -299,13 +311,13 @@ func (w *Web) act(rw http.ResponseWriter, r *http.Request, name, action string) 
 	}
 	if action == "delete" && r.PostFormValue("confirm") != v.Name {
 		p.Error = "Type " + v.Name + " to delete it."
-		w.vmPage(rw, http.StatusBadRequest, p, v)
+		w.vmPage(rw, http.StatusBadRequest, p, v, "")
 		return
 	}
 	do := map[string]func(string, bool, string) error{"restart": w.restart, "delete": w.remove}[action]
 	if err := do(p.User, p.Admin, v.Name); err != nil {
 		p.Error = err.Error() + "."
-		w.vmPage(rw, http.StatusInternalServerError, p, v)
+		w.vmPage(rw, http.StatusInternalServerError, p, v, "")
 		return
 	}
 	log.Printf("web: %s (%s): %s %s", s.E, p.User, action, v.Name)

@@ -25,6 +25,34 @@
       <dt>Disk used</dt><dd>{{size .VM.DiskUsed}}</dd>
     </dl>
   </div>
+  <div class="usage-head">
+    <h2>Usage</h2>
+    <nav class="ranges" aria-label="Period">{{range .Usage.Ranges}}<a href="/vm/{{$.VM.Name}}?range={{.}}"{{if eq . $.Usage.Range}} aria-current="page"{{end}}>{{.}}</a>{{end}}</nav>
+  </div>
+  {{if .Usage.Charts}}
+  <div class="charts" data-times="{{.Usage.Times}}">
+    {{range .Usage.Charts}}
+    <figure class="chart" data-values="{{.Values}}">
+      <figcaption><h3>{{.Title}}</h3> <span>peak {{.Peak}}, average {{.Avg}}</span></figcaption>
+      <div class="plot">
+        <svg viewBox="0 0 1000 100" preserveAspectRatio="none" role="img" aria-label="{{.Title}} over the last {{$.Usage.Range}}: peak {{.Peak}}, average {{.Avg}}">
+          <line class="grid" x1="0" y1="0" x2="1000" y2="0"/>
+          <line class="grid" x1="0" y1="50" x2="1000" y2="50"/>
+          <line class="base" x1="0" y1="100" x2="1000" y2="100"/>
+          <path class="area" d="{{.Area}}"/>
+          <path class="line" d="{{.Line}}"/>
+          <path class="dots" d="{{.Dots}}"/>
+        </svg>
+        <span class="scale">{{.Top}}</span>
+      </div>
+      <div class="axis"><span>{{$.Usage.From}}</span><span>now</span></div>
+    </figure>
+    {{end}}
+  </div>
+  <p class="hint">CPU: 100% is one core. RAM: what the VM takes on the host. Disk: the space it takes.</p>
+  {{else}}
+  <p class="muted">Nothing recorded yet: boxe records what the VM uses once a minute.</p>
+  {{end}}
   <h2>Web</h2>
   <p>Port 8000 of the VM is <a href="{{.VM.URL}}" target="_blank" rel="noopener">{{.VM.URL}}</a>, open to the team after login.
   Ports 3000 to 9999 are <code>https://{{.VM.Name}}--3000.{{.Domain}}</code> and so on.</p>
