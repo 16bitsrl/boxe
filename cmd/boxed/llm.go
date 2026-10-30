@@ -59,10 +59,17 @@ type Gateway struct {
 	addr     string            // where VMs reach it, e.g. 10.42.0.1:2998
 	upstream map[string]string // provider -> base URL (tests point them elsewhere)
 	client   *http.Client
+
+	mu   sync.Mutex
+	busy map[string]int // VM -> requests under way
 }
 
+// llmPerVM is how many requests a VM can have under way: each can hold
+// up to requestLimit of the host's memory.
+const llmPerVM = 16
+
 func newGateway(store *Store, addr string) *Gateway {
-	g := &Gateway{store: store, addr: addr, upstream: map[string]string{}, client: &http.Client{Timeout: 15 * time.Second}}
+	g := &Gateway{store: store, addr: addr, upstream: map[string]string{}, busy: map[string]int{}, client: &http.Client{Timeout: 15 * time.Second}}
 	for _, p := range llmProviders {
 		g.upstream[p.name] = p.upstream
 	}
@@ -125,8 +132,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// A key of the VM's own (or a subscription's token) goes through as it
 	// is; the placeholder, or none, gets the owner's.
-	c := credential(r)
-	add := c == "" || c == llmPlaceholder || c == "implicit"
+	add := !ownCredential(p, r)
 	if add && keys[p.name] == "" {
 		ownKeyMissing(w, p)
 		return
@@ -134,15 +140,54 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !add {
 		keys[p.name] = ""
 	}
+	if !g.start(v) {
+		http.Error(w, "boxe gateway: too many requests under way from this VM", http.StatusTooManyRequests)
+		return
+	}
+	defer g.end(v)
 	g.proxy(p, v, keys[p.name]).ServeHTTP(w, r)
 }
 
-// credential is the key a request carries, as the provider takes it.
-func credential(r *http.Request) string {
-	if k := r.Header.Get("X-Api-Key"); k != "" {
-		return k
+func (g *Gateway) start(v VM) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.busy[v.Name] >= llmPerVM {
+		return false
 	}
-	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	g.busy[v.Name]++
+	return true
+}
+
+func (g *Gateway) end(v VM) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.busy[v.Name]--; g.busy[v.Name] == 0 {
+		delete(g.busy, v.Name)
+	}
+}
+
+// credentialHeaders are where p reads a key from: Anthropic takes an API
+// key or a subscription's bearer token, OpenAI only the bearer.
+func credentialHeaders(p llmProvider) []string {
+	if p.name == "anthropic" {
+		return []string{"X-Api-Key", "Authorization"}
+	}
+	return []string{"Authorization"}
+}
+
+func placeholder(v string) bool {
+	v = strings.TrimPrefix(v, "Bearer ")
+	return v == "" || v == llmPlaceholder || v == "implicit"
+}
+
+// ownCredential says whether a request carries a key, or token, of its own.
+func ownCredential(p llmProvider, r *http.Request) bool {
+	for _, h := range credentialHeaders(p) {
+		if !placeholder(r.Header.Get(h)) {
+			return true
+		}
+	}
+	return false
 }
 
 // proxy sends requests on to p, with key in place of theirs if not empty.
@@ -157,9 +202,12 @@ func (g *Gateway) proxy(p llmProvider, v VM, key string) http.Handler {
 			// Plain answers, to read the tokens: the transport asks for
 			// gzip itself and undoes it.
 			pr.Out.Header.Del("Accept-Encoding")
+			for _, h := range []string{"Authorization", "X-Api-Key"} {
+				if key != "" || placeholder(pr.Out.Header.Get(h)) {
+					pr.Out.Header.Del(h)
+				}
+			}
 			if key != "" {
-				pr.Out.Header.Del("Authorization")
-				pr.Out.Header.Del("X-Api-Key")
 				if p.name == "anthropic" {
 					pr.Out.Header.Set("X-Api-Key", key)
 				} else {
@@ -172,8 +220,10 @@ func (g *Gateway) proxy(p llmProvider, v VM, key string) http.Handler {
 		},
 		FlushInterval: -1, // streams go on as they come
 		ModifyResponse: func(resp *http.Response) error {
+			// Only requests that make an answer: looking one up again
+			// (GET /responses/<id>) reports the same tokens.
 			ct := resp.Header.Get("Content-Type")
-			if resp.StatusCode == http.StatusOK && (strings.HasPrefix(ct, "text/event-stream") || strings.HasPrefix(ct, "application/json")) {
+			if resp.Request.Method == http.MethodPost && resp.StatusCode == http.StatusOK && (strings.HasPrefix(ct, "text/event-stream") || strings.HasPrefix(ct, "application/json")) {
 				resp.Body = &meter{ReadCloser: resp.Body, sse: strings.HasPrefix(ct, "text/event-stream"),
 					record: func(u llmUsage) { g.record(v, p.name, u) }}
 			}

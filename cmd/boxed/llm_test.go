@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeProvider stands in for api.anthropic.com and api.openai.com: it
@@ -21,9 +22,10 @@ type fakeProvider struct {
 	mu       sync.Mutex
 	reqs     []*http.Request
 	bodies   []string
-	answer   string // body of the answer
-	sse      bool   // answer as a stream of server-sent events
-	validKey string // /models answers 401 to other keys
+	answer   string        // body of the answer
+	sse      bool          // answer as a stream of server-sent events
+	validKey string        // /models answers 401 to other keys
+	hold     chan struct{} // if set, answers wait for it to close
 }
 
 func newFakeProvider(t *testing.T) *fakeProvider {
@@ -33,8 +35,11 @@ func newFakeProvider(t *testing.T) *fakeProvider {
 		f.mu.Lock()
 		f.reqs = append(f.reqs, r)
 		f.bodies = append(f.bodies, string(body))
-		answer, sse, valid := f.answer, f.sse, f.validKey
+		answer, sse, valid, hold := f.answer, f.sse, f.validKey, f.hold
 		f.mu.Unlock()
+		if hold != nil {
+			<-hold
+		}
 		if strings.HasSuffix(r.URL.Path, "/models") {
 			key := r.Header.Get("X-Api-Key") + strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if key != valid {
@@ -434,5 +439,136 @@ func TestMeterOverflow(t *testing.T) {
 	m.Close()
 	if got.Model != "m" || got.Input != 7 || got.Output != 3 {
 		t.Errorf("usage after a long event: %+v", got)
+	}
+}
+
+// Only the credential the provider reads decides: a stray header neither
+// hides a real key nor keeps the placeholder from being replaced.
+func TestGatewayCredentialHeaders(t *testing.T) {
+	c, anthropic, openai := llmCLI(t, "alice")
+	c.must("alice", "new test")
+	c.setKey("alice", "anthropic", "sk-ant-alice")
+	c.setKey("alice", "openai", "sk-oai-alice")
+	g := c.box.llm
+
+	fromVM(g, "10.42.0.2", "POST", "/openai/responses", `{}`, map[string]string{"Authorization": "Bearer sk-oai-own", "X-Api-Key": "boxe"})
+	if r, _ := openai.last(); r.Header.Get("Authorization") != "Bearer sk-oai-own" {
+		t.Errorf("own OpenAI key replaced: %q", r.Header.Get("Authorization"))
+	}
+	fromVM(g, "10.42.0.2", "POST", "/openai/responses", `{}`, map[string]string{"Authorization": "Bearer boxe", "X-Api-Key": "something-else"})
+	if r, _ := openai.last(); r.Header.Get("Authorization") != "Bearer sk-oai-alice" {
+		t.Errorf("OpenAI placeholder kept: %q", r.Header.Get("Authorization"))
+	}
+	// Claude Code with a subscription sends its token as a bearer.
+	fromVM(g, "10.42.0.2", "POST", "/anthropic/v1/messages", `{}`, map[string]string{"Authorization": "Bearer sk-ant-oat-own", "X-Api-Key": "boxe"})
+	if r, _ := anthropic.last(); r.Header.Get("Authorization") != "Bearer sk-ant-oat-own" || r.Header.Get("X-Api-Key") != "" {
+		t.Errorf("subscription token replaced: %v", r.Header)
+	}
+}
+
+// Looking an answer up again is not a new answer: only requests that make
+// one are counted.
+func TestGatewayCountsOnce(t *testing.T) {
+	c, _, openai := llmCLI(t, "alice")
+	c.must("alice", "new test")
+	c.setKey("alice", "openai", "sk-oai-alice")
+	g := c.box.llm
+	openai.answer = `{"id":"resp_1","model":"gpt-5","usage":{"input_tokens":2000,"output_tokens":100,"input_tokens_details":{"cached_tokens":0}}}`
+	fromVM(g, "10.42.0.2", "POST", "/openai/responses", `{"model":"gpt-5"}`, nil)
+	fromVM(g, "10.42.0.2", "GET", "/openai/responses/resp_1", "", nil)
+	fromVM(g, "10.42.0.2", "GET", "/openai/responses/resp_1", "", nil)
+	var usage []llmUsageJSON
+	c.json("alice", "llm usage --json", &usage)
+	if len(usage) != 1 || usage[0].Requests != 1 || usage[0].Input != 2000 {
+		t.Errorf("usage: %+v", usage)
+	}
+}
+
+// A VM cannot tie up the host with requests that never end: past a limit
+// it is told to wait.
+func TestGatewayLimitsEachVM(t *testing.T) {
+	c, _, openai := llmCLI(t, "alice")
+	c.must("alice", "new test")
+	c.must("alice", "new other")
+	c.setKey("alice", "openai", "sk-oai-alice")
+	g := c.box.llm
+	before := len(openai.reqs) // the key's check
+	openai.hold = make(chan struct{})
+	var wg sync.WaitGroup
+	for range llmPerVM {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fromVM(g, "10.42.0.2", "POST", "/openai/responses", `{}`, nil)
+		}()
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		openai.mu.Lock()
+		n := len(openai.reqs) - before
+		openai.mu.Unlock()
+		if n == llmPerVM {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(openai.hold)
+			t.Fatalf("%d of %d requests reached the provider", n, llmPerVM)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if w := fromVM(g, "10.42.0.2", "POST", "/openai/responses", `{}`, nil); w.Code != http.StatusTooManyRequests {
+		t.Errorf("one too many: %d", w.Code)
+	}
+	done := make(chan *httptest.ResponseRecorder)
+	go func() { done <- fromVM(g, "10.42.0.3", "POST", "/openai/responses", `{}`, nil) }()
+	time.Sleep(50 * time.Millisecond)
+	close(openai.hold)
+	wg.Wait()
+	if w := <-done; w.Code != 200 {
+		t.Errorf("another VM: %d", w.Code)
+	}
+	if w := fromVM(g, "10.42.0.2", "POST", "/openai/responses", `{}`, nil); w.Code != 200 {
+		t.Errorf("after the others ended: %d", w.Code)
+	}
+}
+
+// A stream reaches the VM as it comes, not when it ends.
+func TestGatewayStreamsLive(t *testing.T) {
+	c, _, _ := llmCLI(t, "alice")
+	c.must("alice", "new test")
+	c.setKey("alice", "anthropic", "sk-ant-alice")
+	g := c.box.llm
+	end := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "event: ping\ndata: {\"type\":\"ping\"}\n\n")
+		w.(http.Flusher).Flush()
+		<-end
+	}))
+	defer up.Close()
+	g.upstream["anthropic"] = up.URL
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.RemoteAddr = "10.42.0.2:40000"
+		g.ServeHTTP(w, r)
+	}))
+	defer gw.Close()
+	defer close(end) // before the servers wait for the request to end
+	resp, err := http.Post(gw.URL+"/anthropic/v1/messages", "application/json", strings.NewReader(`{"stream":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	got := make(chan string)
+	go func() {
+		buf := make([]byte, 100)
+		n, _ := resp.Body.Read(buf)
+		got <- string(buf[:n])
+	}()
+	select {
+	case s := <-got:
+		if !strings.Contains(s, "ping") {
+			t.Errorf("first part: %q", s)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("nothing arrived before the stream ended")
 	}
 }
