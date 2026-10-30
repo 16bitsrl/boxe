@@ -1,13 +1,14 @@
 [Unit]
 Description=boxe: team microVMs (SSH to "boxe" on the tailnet)
-After=network-online.target boxe-net.service zfs.target
-Wants=network-online.target
+After=network-online.target boxe-net.service zfs.target boxe-front.service
+Wants=network-online.target boxe-front.service
 Requires=boxe-net.service
 
 [Service]
 # BOXED_FLAGS: this installation's settings (domain, OIDC, base image...), see boxed.env.example.
+# Users' connections go through boxe-front, which a restart of boxed does not drop.
 EnvironmentFile=-/etc/boxe/boxed.env
-ExecStart=/usr/local/sbin/boxed $BOXED_FLAGS
+ExecStart=/usr/local/sbin/boxed $BOXED_FLAGS -sockets /run/boxe/front
 Restart=on-failure
 RestartSec=2
 

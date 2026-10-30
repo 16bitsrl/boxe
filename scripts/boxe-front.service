@@ -1,0 +1,14 @@
+[Unit]
+Description=boxe front: SSH and web connections of users, kept while boxed restarts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# The same settings as boxed: the front uses only what it listens on.
+EnvironmentFile=-/etc/boxe/boxed.env
+ExecStart=/usr/local/sbin/boxed $BOXED_FLAGS -front -sockets /run/boxe/front
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -10,7 +10,8 @@
 Tiny Linux microVMs that start in about a second, on a host you own. Create
 one over SSH; it gets its own HTTPS address behind your team's login. boxe is
 a self-hosted take on [exe.dev](https://exe.dev): one Go daemon (`boxed`) on
-one Linux host with KVM and ZFS.
+one Linux host with KVM and ZFS, and a small companion (`boxed -front`) that
+keeps users' connections open while `boxed` restarts.
 
 [boxe.dev](https://boxe.dev) · [Install](#install) · [Security model](#security-model)
 
@@ -42,10 +43,13 @@ before you trust it with anything.
              ssh boxe <command>, ssh <vm>.boxe          https://<vm>.boxe.example.com
                        │ (Tailscale)                        │
                        ▼                                    ▼
- host     ┌──────────────────── boxed ────────────────── TLS proxy (Caddy, ...)
-          │ SSH server: commands, jump host to VMs   │  web: OIDC login, proxy to VM ports
-          │ VM lifecycle, SQLite                     │
-          └──────────────────────────────────────────┘
+ host     ┌───────────────── boxe-front ───────────────────── TLS proxy (Caddy, ...)
+          │ holds the connections: SSH, jumps, WebSockets │
+          └──────────────── unix sockets ─────────────────┘
+          ┌──────────────────── boxed ────────────────────┐
+          │ SSH commands, who may reach which VM          │  web: OIDC login, proxy to VM ports
+          │ VM lifecycle, SQLite                          │
+          └───────────────────────────────────────────────┘
              │ ZFS clone (instant)      │ cloud-hypervisor per VM (unprivileged, sandboxed)
              ▼                          ▼
           zvol per VM  ◄────────── microVM ── tap ── br0 10.42.0.0/16 ── NAT ── internet
@@ -69,6 +73,17 @@ before you trust it with anything.
 - **HTTPS**: a TLS proxy in front sends `<domain>` and `*.<domain>` to `boxed`.
   `boxed` logs users in with OIDC, gives every VM host its own session cookie,
   and proxies to the VM with the user's email in `X-Box-Email`.
+- **Deploys keep connections.** `boxed -front` (the `boxe-front` unit) is
+  the SSH server users talk to and the web server behind the TLS proxy. It
+  decides nothing: `boxed` says whose key it is, runs the commands, checks
+  every request and opens every connection to a VM, then hands the open
+  connection over (its file descriptor, on a unix socket only root can
+  reach), and the front copies the bytes from then on. A deploy restarts
+  `boxed` only: `ssh <vm>.boxe` sessions, `-L` forwards and WebSockets (the
+  agent, the desktop, apps) go on, and web requests made meanwhile wait a
+  moment for it. `ssh boxe` commands, the prompt and other web requests in
+  progress end. The front counts the connections it pipes to each VM, for
+  sleep. It changes rarely and restarts only on purpose.
 - **Network**: VMs reach the internet only. They cannot reach each other, the
   host (but for `boxed`'s DNS, integrations and LLM gateway on the gateway),
   private networks, the tailnet or cloud metadata. Each tap may only
@@ -343,9 +358,12 @@ C8i/M8i/R8i).
      GitHub username per line, then the member's email at the identity
      provider (without it they get no panel, agent or desktop), then
      `admin` for an admin.
-   - Install `boxe-net.service` and `boxed.service` from `scripts/` in
-     `/etc/systemd/system`, then `systemctl enable --now boxe-net` and
-     `systemctl enable boxed` (it starts at the first deploy).
+   - Install `boxe-net.service`, `boxe-front.service` and `boxed.service`
+     from `scripts/` in `/etc/systemd/system`, then
+     `systemctl enable --now boxe-net` and
+     `systemctl enable boxe-front boxed` (they start at the first deploy).
+     Both read the settings below; `boxe-front` uses only what it listens
+     on.
 6. **Settings:** `/etc/boxe/boxed.env` (see `scripts/boxed.env.example` and
    `boxed -help`).
    - **Image:** `-base boxe/images/boxeuntu-<date>@base`, the image of step 4.
@@ -355,7 +373,7 @@ C8i/M8i/R8i).
      by itself as the node `boxe` (`-ts-hostname`), so `ssh boxe` and
      `ssh <vm>.boxe` work from every device on it. Put an auth key in
      `/etc/boxe/ts-authkey` before the first start, or open the login link
-     that `journalctl -u boxed` shows. Tailscale on the host is not needed.
+     that `journalctl -u boxe-front` shows (the front is the node). Tailscale on the host is not needed.
      Without Tailscale, set `-ts-hostname= -listen :2222` and give members
      a `Host boxe` entry with the host's address and `Port 2222` in
      `~/.ssh/config`.
@@ -388,7 +406,26 @@ C8i/M8i/R8i).
 
 - **Deploy and roll back:** `scripts/deploy.sh <host>` and
   `scripts/deploy.sh <host> --rollback`. The last five versions stay in
-  `/usr/local/lib/boxed/`.
+  `/usr/local/lib/boxed/`. A deploy restarts `boxed` only, and installs
+  `boxe-front.service` if it is missing or changed, without restarting it.
+- **The front:** `boxe-front` keeps running the version it started with.
+  `scripts/deploy.sh <host> --front` deploys and restarts it too, on the new
+  version: that drops every SSH and web connection, so do it when the front
+  itself changed (`front.go`, or what `boxed` answers it in `backend.go`),
+  and keep those changes compatible with the front already running.
+  `systemctl restart boxe-front` on the host does the same with the version
+  in place. Connections through `boxed`'s own listeners for VMs (DNS on
+  `10.42.0.1:53`, integrations on `:80`, the LLM gateway on `:2998`) are
+  cut by any restart of `boxed`: a streamed model answer stops halfway.
+- **From one process to two** (an installation from before `boxe-front`):
+  deploy once (it installs `boxe-front.service`), then on the host
+  `systemctl stop boxed`, install `boxed.service` from `scripts/`,
+  `systemctl daemon-reload`, `systemctl enable --now boxe-front`,
+  `systemctl start boxed`. The front takes over the Tailscale node with
+  its state in `/var/lib/boxe/tsnet`, and the SSH host key: users see the
+  same `boxe`. Going back: `systemctl disable --now boxe-front`, put back
+  `ExecStart=/usr/local/sbin/boxed $BOXED_FLAGS` (no `-sockets`) and
+  `systemctl daemon-reload && systemctl restart boxed`.
 - **New base image:** build it under a new name, then point `-base` at it.
   Images are never rebuilt in place, because VMs are clones of them.
   Existing VMs keep their image. Delete an old image once
@@ -427,8 +464,8 @@ C8i/M8i/R8i).
 - **Health:** `https://<domain>/healthz` answers `ok`, or 503 with what needs
   attention: failed VMs, low disk, stale GitHub keys, an old backup. Point
   any uptime monitor at it.
-- **Logs:** `journalctl -u boxed` and `journalctl -u boxe-vm-<name>` (the VM's
-  console).
+- **Logs:** `journalctl -u boxed`, `journalctl -u boxe-front` and
+  `journalctl -u boxe-vm-<name>` (the VM's console).
 - **After a host reboot:** `boxed` starts every VM again. A VM that fails to
   start shows as `failed` in `ssh boxe ls`; `ssh boxe restart <name>` retries it.
 
