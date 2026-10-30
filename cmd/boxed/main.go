@@ -58,6 +58,8 @@ func main() {
 		sleepAfter  = flag.Duration("sleep-after", 0, "put a VM to sleep after this long unused (no SSH or web connection, little CPU and traffic), e.g. 30m; 0: never")
 		llmAddr     = flag.String("llm-gateway", "10.42.0.1:2998", "address on the VM bridge of the LLM gateway, which adds the members' API keys (ssh boxe llm); empty to disable")
 		powerOffVM  = flag.String("power-off", "", "internal, run by systemd: shut down the VM behind this API socket (hypervisor pid in $MAINPID)")
+		front       = flag.Bool("front", false, "run as boxe-front: hold the SSH and web connections of users (-ts-hostname, -listen, -http), so that restarting boxed does not drop them; needs -sockets")
+		sockets     = flag.String("sockets", "", "directory of the sockets between boxed -front and boxed, e.g. /run/boxe/front; empty: boxed holds the connections itself")
 	)
 	flag.Parse()
 	if *showVersion {
@@ -75,6 +77,14 @@ func main() {
 		return
 	}
 	log.SetFlags(0)
+	if *front {
+		httpListen := *httpAddr
+		if *domain == "" {
+			httpListen = ""
+		}
+		runFront(*sockets, *stateDir, *tsName, *listen, httpListen)
+		return
+	}
 
 	store, err := openStore(*stateDir + "/boxe.db")
 	if err != nil {
@@ -138,6 +148,9 @@ func main() {
 			SSHSuffix: *sshSuffix, WebDomain: webDomain,
 			Boxed: selfPath(),
 		}}
+	if *sockets != "" {
+		b.front = &frontClient{sock: filepath.Join(*sockets, frontSock)}
+	}
 	if err := b.hv.checkSetup(exec.LookPath); err != nil {
 		log.Fatal(err)
 	}
@@ -185,11 +198,12 @@ func main() {
 		go b.WakeLoop(15 * time.Second)
 	}
 
+	var web *Web
 	if webDomain != "" {
 		if *org == "" && *emailDoms == "" {
 			log.Fatal("-domain needs -oidc-org or -oidc-email-domains: who may log in")
 		}
-		web, err := newWebFromFiles(WebConfig{Domain: *domain, Issuer: *issuer, OrgID: *org, EmailDomains: splitList(*emailDoms)},
+		web, err = newWebFromFiles(WebConfig{Domain: *domain, Issuer: *issuer, OrgID: *org, EmailDomains: splitList(*emailDoms)},
 			*oidcFile, *stateDir+"/web_secret", store)
 		if err != nil {
 			log.Fatal(err)
@@ -203,7 +217,16 @@ func main() {
 		web.ownerEmail = keys.Email
 		b.panel(web)
 		b.api(web)
-		go func() { log.Fatal(http.ListenAndServe(*httpAddr, web)) }()
+		if *sockets == "" {
+			go func() { log.Fatal(http.ListenAndServe(*httpAddr, web)) }()
+		}
+	}
+	if *sockets != "" {
+		if _, err := serveBackend(b, web, *sockets); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("boxed %s: %d VMs, connections held by boxed -front", version, len(vms))
+		select {}
 	}
 
 	srv := b.server()
@@ -213,18 +236,29 @@ func main() {
 	}
 	srv.AddHostKey(signer)
 
+	lns := sshListeners(*stateDir, *tsName, *listen)
+	for _, ln := range lns[1:] {
+		go func() { log.Fatal(srv.Serve(ln)) }()
+	}
+	log.Printf("boxed %s: %d VMs, listening on %d addresses", version, len(vms), len(lns))
+	log.Fatal(srv.Serve(lns[0]))
+}
+
+// sshListeners are where users ssh to: the tailnet node tsName (its state
+// in stateDir/tsnet), and listen.
+func sshListeners(stateDir, tsName, listen string) []net.Listener {
 	var lns []net.Listener
-	if *listen != "" {
-		ln, err := net.Listen("tcp", *listen)
+	if listen != "" {
+		ln, err := net.Listen("tcp", listen)
 		if err != nil {
 			log.Fatal(err)
 		}
 		lns = append(lns, ln)
 	}
-	if *tsName != "" {
+	if tsName != "" {
 		ts := &tsnet.Server{
-			Hostname: *tsName,
-			Dir:      *stateDir + "/tsnet",
+			Hostname: tsName,
+			Dir:      stateDir + "/tsnet",
 			AuthKey:  readAuthKey(),
 			Logf:     func(string, ...any) {},
 		}
@@ -237,11 +271,7 @@ func main() {
 	if len(lns) == 0 {
 		log.Fatal("nothing to listen on")
 	}
-	for _, ln := range lns[1:] {
-		go func() { log.Fatal(srv.Serve(ln)) }()
-	}
-	log.Printf("boxed %s: %d VMs, listening on %d addresses", version, len(vms), len(lns))
-	log.Fatal(srv.Serve(lns[0]))
+	return lns
 }
 
 // readAuthKey is only needed for the first login of the tsnet node.

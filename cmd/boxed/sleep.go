@@ -236,6 +236,7 @@ const (
 // activity is what boxed knows of a running VM's use.
 type activity struct {
 	conns   int       // open SSH jumps and web requests
+	front   int       // connections boxed -front pipes to it (front.go)
 	last    time.Time // last time it was in use
 	cpu     int64     // CPU time and traffic at the last check
 	traffic int64
@@ -265,11 +266,33 @@ func (b *Box) activityOf(name string, now time.Time) *activity {
 	return a
 }
 
+// syncFront takes from boxed -front how many connections it pipes to each
+// VM. false if it does not answer: then no VM counts as unused.
+func (b *Box) syncFront(now time.Time) bool {
+	if b.front == nil {
+		return true
+	}
+	open, err := b.front.conns()
+	if err != nil {
+		log.Printf("front: %v", err)
+		return false
+	}
+	b.actMu.Lock()
+	defer b.actMu.Unlock()
+	for _, a := range b.act {
+		a.front = 0
+	}
+	for name, n := range open {
+		b.activityOf(name, now).front = n
+	}
+	return true
+}
+
 // idle tells whether a VM used as a says can go to sleep: nobody has used
 // it for sleepAfter or, woken up for a job, it has been idle for jobIdle
 // since the job's time. Called with b.actMu held.
 func (b *Box) idle(a *activity, now time.Time) bool {
-	if a == nil || a.conns > 0 {
+	if a == nil || a.conns > 0 || a.front > 0 {
 		return false
 	}
 	if !a.job.IsZero() {
@@ -286,7 +309,7 @@ func (b *Box) idle(a *activity, now time.Time) bool {
 // web connection, little CPU, little traffic. Runs every minute or so; its
 // readings also give the CPU use in ls, so it runs even if VMs never sleep.
 func (b *Box) sleepIdle(now time.Time) {
-	sleeps := b.hv.SleepDir != ""
+	sleeps := b.hv.SleepDir != "" && b.syncFront(now)
 	vms, err := b.store.List("")
 	if err != nil {
 		log.Printf("sleep: %v", err)
@@ -307,7 +330,7 @@ func (b *Box) sleepIdle(now time.Time) {
 				a.last = now
 			}
 		}
-		if a.conns > 0 || v.KeepAwake {
+		if a.conns > 0 || a.front > 0 || v.KeepAwake {
 			a.last = now // a VM kept awake is unused from when that ends
 		}
 		a.cpu, a.traffic, a.at = cpu, traffic, now
@@ -325,6 +348,9 @@ func (b *Box) sleepIdle(now time.Time) {
 func (b *Box) sleepIfIdle(v VM, now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if !b.syncFront(now) {
+		return
+	}
 	b.actMu.Lock()
 	a := b.act[v.Name]
 	idle, job := b.idle(a, now), a != nil && !a.job.IsZero()
@@ -446,6 +472,7 @@ func (b *Box) makeRoom(v VM) error {
 	awake, _ := memMiB(v.Mem)
 	var idle []VM
 	last := map[string]time.Time{}
+	synced := b.syncFront(time.Now())
 	b.actMu.Lock()
 	for _, o := range vms {
 		if o.Name == v.Name || b.hv.Sleeping(o.Name) {
@@ -453,11 +480,11 @@ func (b *Box) makeRoom(v VM) error {
 		}
 		m, _ := memMiB(o.Mem)
 		awake += m
-		if a := b.act[o.Name]; a == nil || a.conns == 0 {
+		if a := b.act[o.Name]; a == nil || a.conns+a.front == 0 {
 			if a != nil {
 				last[o.Name] = a.last
 			}
-			if !o.KeepAwake && b.hv.SleepDir != "" {
+			if !o.KeepAwake && b.hv.SleepDir != "" && synced {
 				idle = append(idle, o)
 			}
 		}

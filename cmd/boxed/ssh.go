@@ -48,6 +48,10 @@ type Box struct {
 	act        map[string]*activity // running VMs: how they are used (sleep.go)
 
 	llm *Gateway // nil: no LLM gateway
+
+	// front is boxed -front, which holds the users' connections (front.go);
+	// nil: this process does.
+	front *frontClient
 }
 
 const keyKey ctxKey = "boxe-key"
@@ -55,6 +59,11 @@ const keyKey ctxKey = "boxe-key"
 // revalidate drops the connections whose user or key is no longer valid.
 // Runs after every key refresh.
 func (b *Box) revalidate() {
+	if b.front != nil {
+		if err := b.front.revalidate(); err != nil {
+			log.Printf("front: %v", err)
+		}
+	}
 	b.connsMu.Lock()
 	defer b.connsMu.Unlock()
 	for ctx, conn := range b.conns {
@@ -1065,24 +1074,9 @@ func (b *Box) directTCPIP(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh
 		return
 	}
 	user, _ := ctx.Value(userKey).(string)
-	name := strings.TrimSuffix(d.DestAddr, "."+b.hv.SSHSuffix)
-	if err := b.wake(user, name); err != nil {
-		newChan.Reject(gossh.ConnectionFailed, err.Error())
-		return
-	}
-	// Look up and connect under the lock: the VM cannot be deleted and its
-	// address given to someone else's VM in between.
-	b.mu.RLock()
-	v, err := b.owned(user, name)
+	v, dst, reason, err := b.jump(user, d.DestAddr, d.DestPort)
 	if err != nil {
-		b.mu.RUnlock()
-		newChan.Reject(gossh.Prohibited, err.Error())
-		return
-	}
-	dst, err := b.hv.dial("tcp", net.JoinHostPort(v.IP(), strconv.Itoa(int(d.DestPort))), 3*time.Second)
-	b.mu.RUnlock()
-	if err != nil {
-		newChan.Reject(gossh.ConnectionFailed, err.Error())
+		newChan.Reject(reason, err.Error())
 		return
 	}
 	ch, reqs, err := newChan.Accept()
@@ -1111,6 +1105,28 @@ func (b *Box) directTCPIP(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh
 		defer dst.Close()
 		io.Copy(dst, ch)
 	}()
+}
+
+// jump connects user to port of their VM host (<vm>.<suffix>), waking it
+// up first; on failure, why, as SSH says it.
+func (b *Box) jump(user, host string, port uint32) (VM, net.Conn, gossh.RejectionReason, error) {
+	name := strings.TrimSuffix(host, "."+b.hv.SSHSuffix)
+	if err := b.wake(user, name); err != nil {
+		return VM{}, nil, gossh.ConnectionFailed, err
+	}
+	// Look up and connect under the lock: the VM cannot be deleted and its
+	// address given to someone else's VM in between.
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	v, err := b.owned(user, name)
+	if err != nil {
+		return v, nil, gossh.Prohibited, err
+	}
+	dst, err := b.hv.dial("tcp", net.JoinHostPort(v.IP(), strconv.Itoa(int(port))), 3*time.Second)
+	if err != nil {
+		return v, nil, gossh.ConnectionFailed, err
+	}
+	return v, dst, 0, nil
 }
 
 // problems lists what needs an admin, for /healthz: no names or details,

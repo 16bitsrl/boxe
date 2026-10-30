@@ -54,6 +54,9 @@ type Web struct {
 	images  func() ([]image, error)
 	console func(vm string) (string, error) // what it printed lately
 	api     http.Handler                    // POST /exec (api.go); nil: no API
+	// handOff: boxed -front pipes WebSockets, which then outlive a restart
+	// of boxed; upgrade opens them and hands them over (front.go).
+	handOff bool
 
 	mu  sync.Mutex
 	idp struct{ Auth, Token, Userinfo string } // from discovery, on first use
@@ -232,6 +235,10 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if w.busy != nil {
 		w.busy(v.Name, 1)
 		defer w.busy(v.Name, -1)
+	}
+	if w.handOff && isUpgrade(r) {
+		w.upgrade(rw, r, v, port, email)
+		return
 	}
 	w.proxy(v, port, email).ServeHTTP(rw, r)
 }
@@ -490,63 +497,76 @@ func isBoxCookie(name string) bool {
 // for a visitor with a share link (email empty).
 func (w *Web) proxy(v VM, port int, email string) http.Handler {
 	target := &url.URL{Scheme: "http", Host: w.vmAddr(v, port)}
-	// Connect only while v is still the VM at this address, as the SSH jump
-	// does: a VM deleted meanwhile may have passed its address to another.
 	// No connection reuse, which could outlive v.
 	transport := &http.Transport{
 		DisableKeepAlives: true,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			if w.vmLock != nil {
-				w.vmLock.RLock()
-				defer w.vmLock.RUnlock()
-			}
-			cur, err := w.store.Get(v.Name)
-			if err != nil || !cur.same(v) {
-				return nil, fmt.Errorf("%s is gone", v.Name)
-			}
-			d := net.Dialer{Timeout: 3 * time.Second}
-			return d.DialContext(ctx, network, addr)
+			return w.dialVM(ctx, v, network, addr)
 		},
 	}
 	return &httputil.ReverseProxy{
 		Transport: transport,
-		Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.Out.Header["X-Forwarded-For"] = pr.In.Header["X-Forwarded-For"]
-			pr.SetURL(target)
-			pr.SetXForwarded()
-			pr.Out.Host = pr.In.Host
-			pr.Out.Header.Set("X-Forwarded-Proto", "https")
-			for k := range pr.Out.Header {
-				if strings.HasPrefix(k, "X-Box-") {
-					pr.Out.Header.Del(k)
-				}
-			}
-			if email != "" {
-				pr.Out.Header.Set("X-Box-Email", email)
-			}
-			pr.Out.Header.Del("Cookie")
-			for _, c := range pr.In.Cookies() {
-				if !isBoxCookie(c.Name) {
-					pr.Out.AddCookie(c)
-				}
-			}
-		},
+		Rewrite:   func(pr *httputil.ProxyRequest) { w.rewrite(pr, target, email) },
 		ModifyResponse: func(resp *http.Response) error {
-			var keep []string
-			for _, line := range resp.Header.Values("Set-Cookie") {
-				if c, err := http.ParseSetCookie(line); err == nil && !isBoxCookie(c.Name) {
-					keep = append(keep, line)
-				}
-			}
-			resp.Header.Del("Set-Cookie")
-			for _, line := range keep {
-				resp.Header.Add("Set-Cookie", line)
-			}
+			dropBoxCookies(resp.Header)
 			return nil
 		},
 		ErrorHandler: func(rw http.ResponseWriter, r *http.Request, err error) {
 			http.Error(rw, fmt.Sprintf("%s is not answering on port %d.", v.Name, port), http.StatusBadGateway)
 		},
+	}
+}
+
+// dialVM connects only while v is still the VM at this address, as the SSH
+// jump does: a VM deleted meanwhile may have passed its address to another.
+func (w *Web) dialVM(ctx context.Context, v VM, network, addr string) (net.Conn, error) {
+	if w.vmLock != nil {
+		w.vmLock.RLock()
+		defer w.vmLock.RUnlock()
+	}
+	cur, err := w.store.Get(v.Name)
+	if err != nil || !cur.same(v) {
+		return nil, fmt.Errorf("%s is gone", v.Name)
+	}
+	d := net.Dialer{Timeout: 3 * time.Second}
+	return d.DialContext(ctx, network, addr)
+}
+
+// rewrite is the request to the VM: the user's email in X-Box-Email, no
+// X-Box-* header from the client, none of boxe's cookies.
+func (w *Web) rewrite(pr *httputil.ProxyRequest, target *url.URL, email string) {
+	pr.Out.Header["X-Forwarded-For"] = pr.In.Header["X-Forwarded-For"]
+	pr.SetURL(target)
+	pr.SetXForwarded()
+	pr.Out.Host = pr.In.Host
+	pr.Out.Header.Set("X-Forwarded-Proto", "https")
+	for k := range pr.Out.Header {
+		if strings.HasPrefix(k, "X-Box-") {
+			pr.Out.Header.Del(k)
+		}
+	}
+	if email != "" {
+		pr.Out.Header.Set("X-Box-Email", email)
+	}
+	pr.Out.Header.Del("Cookie")
+	for _, c := range pr.In.Cookies() {
+		if !isBoxCookie(c.Name) {
+			pr.Out.AddCookie(c)
+		}
+	}
+}
+
+// dropBoxCookies removes from a VM's answer the cookies it may not set.
+func dropBoxCookies(h http.Header) {
+	var keep []string
+	for _, line := range h.Values("Set-Cookie") {
+		if c, err := http.ParseSetCookie(line); err == nil && !isBoxCookie(c.Name) {
+			keep = append(keep, line)
+		}
+	}
+	h.Del("Set-Cookie")
+	for _, line := range keep {
+		h.Add("Set-Cookie", line)
 	}
 }
 
