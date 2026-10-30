@@ -30,7 +30,8 @@ restic backup --host boxe --tag state /etc/boxe "$work/boxe.db" \
 
 zfs create -o mountpoint=none "$TMP"
 failed=0
-for ds in $(zfs list -H -o name -d 1 "$DATASET" | tail -n +2); do
+# Disks set aside by boxe-restore.sh are not VMs.
+for ds in $(zfs list -H -o name -d 1 "$DATASET" | tail -n +2 | grep -v -- '-before-restore$'); do
 	vm=${ds##*/}
 	zfs snapshot "$ds@$TAG"
 	zfs clone "$ds@$TAG" "$TMP/$vm"

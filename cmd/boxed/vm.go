@@ -261,6 +261,15 @@ func (h *Hypervisor) writeConfig(v VM, authorizedKeys string) error {
 	return os.WriteFile(h.config(v.Name), data, 0o600)
 }
 
+// vmHostname is the VM's full name, <vm>.<domain>: Shelley shows it, and
+// adds .exe.xyz to a name without dots. The kernel takes up to 64 characters.
+func vmHostname(name, domain string) string {
+	if domain == "" || len(name)+1+len(domain) > 64 {
+		return name
+	}
+	return name + "." + domain
+}
+
 func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) {
 	hostKey, hostPub, hostCert, err := h.newHostKey(v.Name)
 	if err != nil {
@@ -272,13 +281,17 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 	machineID := make([]byte, 16)
 	rand.Read(id)
 	rand.Read(machineID)
+	host, names := vmHostname(v.Name, h.WebDomain), v.Name
+	if host != v.Name {
+		names = host + " " + v.Name
+	}
 	files := []struct {
 		path, data string
 		mode       int64
 		user       bool
 	}{
-		{"etc/hostname", v.Name + "\n", 0o644, false},
-		{"etc/hosts", fmt.Sprintf("127.0.0.1 localhost\n127.0.1.1 %s\n::1 localhost ip6-localhost ip6-loopback\n", v.Name), 0o644, false},
+		{"etc/hostname", host + "\n", 0o644, false},
+		{"etc/hosts", fmt.Sprintf("127.0.0.1 localhost\n127.0.1.1 %s\n::1 localhost ip6-localhost ip6-loopback\n", names), 0o644, false},
 		{"etc/resolv.conf", resolvConf(h.DNS), 0o644, false},
 		{"etc/machine-id", hex.EncodeToString(machineID) + "\n", 0o444, false},
 		{"etc/ssh/ssh_host_ed25519_key", hostKey, 0o600, false},

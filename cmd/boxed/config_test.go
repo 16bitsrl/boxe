@@ -59,10 +59,11 @@ func TestConfigArchive(t *testing.T) {
 		}
 		return e
 	}
-	if e := check("etc/hostname", 0o644, 0, tar.TypeReg); e.contents != "quick-fox\n" {
+	// The full name: Shelley adds .exe.xyz to a hostname without dots.
+	if e := check("etc/hostname", 0o644, 0, tar.TypeReg); e.contents != "quick-fox.boxe.example\n" {
 		t.Errorf("hostname: %q", e.contents)
 	}
-	if e := check("etc/hosts", 0o644, 0, tar.TypeReg); !strings.Contains(e.contents, "127.0.1.1 quick-fox") {
+	if e := check("etc/hosts", 0o644, 0, tar.TypeReg); !strings.Contains(e.contents, "127.0.1.1 quick-fox.boxe.example quick-fox\n") {
 		t.Errorf("hosts: %q", e.contents)
 	}
 	if e := check("etc/resolv.conf", 0o644, 0, tar.TypeReg); e.contents != "nameserver 9.9.9.9\n" {
@@ -134,6 +135,20 @@ func TestConfigArchive(t *testing.T) {
 				t.Error("two archives with the same id")
 			}
 			break
+		}
+	}
+}
+
+// Without a web domain, or when the full name is too long for the kernel (64
+// characters), the VM keeps its short name.
+func TestVMHostname(t *testing.T) {
+	for _, c := range []struct{ name, domain, want string }{
+		{"quick-fox", "boxe.example", "quick-fox.boxe.example"},
+		{"quick-fox", "", "quick-fox"},
+		{"quick-fox", strings.Repeat("d", 60), "quick-fox"},
+	} {
+		if got := vmHostname(c.name, c.domain); got != c.want {
+			t.Errorf("vmHostname(%q, %q) = %q, want %q", c.name, c.domain, got, c.want)
 		}
 	}
 }

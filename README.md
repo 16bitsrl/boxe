@@ -87,6 +87,10 @@ before you trust it with anything.
   (for example `image/laravel/`, with PHP, Composer and Node).
   `ssh boxe images` lists them and `ssh boxe new --image laravel` starts
   from the newest version.
+- **Panel**: `https://<domain>`, behind team login, lists your VMs (all of
+  them for an admin) with their links and usage, and shows your account: the
+  SSH keys boxe lets in, how to set up SSH, and logging out everywhere. It is
+  read only: changes are made over SSH.
 
 ## Commands
 
