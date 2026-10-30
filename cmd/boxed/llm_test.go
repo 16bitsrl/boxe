@@ -93,7 +93,7 @@ func (c *cli) setKey(user, provider, key string) (string, string, bool) {
 	return o.String(), e.String(), err == nil
 }
 
-// fromVM is a request a program in the VM at ip makes to the gateway.
+// llmRequest is a request a program in the VM at ip makes to the gateway.
 func llmRequest(g *Gateway, ip, method, path, body string, header map[string]string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, "http://10.42.0.1:2998"+path, strings.NewReader(body))
 	r.RemoteAddr = ip + ":40000"
@@ -570,5 +570,49 @@ func TestGatewayStreamsLive(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("nothing arrived before the stream ended")
+	}
+}
+
+// A VM restricted to its integrations still reaches the models, but not
+// the providers' tools that go on the web for it (search, fetch, MCP
+// servers): through them it would reach the internet after all.
+func TestGatewayRestrictedVMHasNoWebTools(t *testing.T) {
+	c, anthropic, openai := llmCLI(t, "alice")
+	c.must("alice", "new test") // 10.42.0.2
+	c.must("alice", "egress test integrations")
+	c.setKey("alice", "anthropic", "sk-ant-alice")
+	c.setKey("alice", "openai", "sk-oai-alice")
+	g := c.box.llm
+	anthropic.answer = `{"id":"m1"}`
+	openai.answer = `{"id":"r1"}`
+	for _, req := range []struct{ path, body string }{
+		{"/anthropic/v1/messages", `{"model":"m","tools":[{"type":"web_search_20250305","name":"web_search"}]}`},
+		{"/anthropic/v1/messages", `{"model":"m","tools":[{"type":"web_fetch_20250910","name":"web_fetch"}]}`},
+		{"/anthropic/v1/messages", `{"model":"m","mcp_servers":[{"type":"url","url":"https://example.com/mcp"}]}`},
+		{"/openai/responses", `{"model":"m","tools":[{"type":"web_search"}]}`},
+		{"/openai/responses", `{"model":"m","tools":[{"type":"mcp","server_url":"https://example.com"}]}`},
+		{"/openai/chat/completions", `{"model":"m","web_search_options":{}}`},
+		{"/openai/responses", `not json`},
+	} {
+		if w := llmRequest(g, "10.42.0.2", "POST", req.path, req.body, nil); w.Code != http.StatusForbidden {
+			t.Errorf("%s %s: %d", req.path, req.body, w.Code)
+		}
+	}
+	ok := `{"model":"m","tools":[{"name":"get_weather","input_schema":{"type":"object"}}]}`
+	if w := llmRequest(g, "10.42.0.2", "POST", "/anthropic/v1/messages", ok, nil); w.Code != 200 {
+		t.Errorf("a client tool: %d %s", w.Code, w.Body)
+	}
+	if _, body := anthropic.last(); body != ok {
+		t.Errorf("upstream got %q", body)
+	}
+	c.must("alice", "egress test all")
+	for _, req := range []struct{ path, body string }{
+		{"/anthropic/v1/messages", `{"model":"m","tools":[{"type":"web_search_20250305","name":"web_search"}]}`},
+		{"/openai/responses", `{"model":"m","tools":[{"type":"web_search"}]}`},
+		{"/openai/chat/completions", `{"model":"m","web_search_options":{}}`},
+	} {
+		if w := llmRequest(g, "10.42.0.2", "POST", req.path, req.body, nil); w.Code != 200 {
+			t.Errorf("with egress all, %s %s: %d %s", req.path, req.body, w.Code, w.Body)
+		}
 	}
 }

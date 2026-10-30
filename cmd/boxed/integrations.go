@@ -478,16 +478,43 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 var errNotPublic = errors.New("not a public address")
 
+var cgnat = netip.MustParsePrefix("100.64.0.0/10")
+
+// public says whether an integration may reach ip: a public address, and
+// none of the host's own (local), which may be public too.
+func public(ip netip.Addr, local []netip.Addr) bool {
+	ip = ip.Unmap()
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || cgnat.Contains(ip) {
+		return false
+	}
+	for _, l := range local {
+		if l.Unmap() == ip {
+			return false
+		}
+	}
+	return true
+}
+
+// localAddrs are the addresses of the host's interfaces.
+func localAddrs() []netip.Addr {
+	addrs, _ := net.InterfaceAddrs()
+	var list []netip.Addr
+	for _, a := range addrs {
+		if p, err := netip.ParsePrefix(a.String()); err == nil {
+			list = append(list, p.Addr())
+		}
+	}
+	return list
+}
+
 // publicTransport reaches public addresses only: an integration does not
 // take VMs to the host, the LAN or the tailnet. Checked on the address
 // dialed, after DNS, so a name cannot resolve its way in.
 func publicTransport() *http.Transport {
-	cgnat := netip.MustParsePrefix("100.64.0.0/10")
 	d := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second,
 		Control: func(_, address string, _ syscall.RawConn) error {
 			ap, err := netip.ParseAddrPort(address)
-			ip := ap.Addr().Unmap()
-			if err != nil || !ip.IsGlobalUnicast() || ip.IsPrivate() || cgnat.Contains(ip) {
+			if err != nil || !public(ap.Addr(), localAddrs()) {
 				return errNotPublic
 			}
 			return nil

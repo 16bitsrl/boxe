@@ -266,8 +266,11 @@ func cronField(field string, lo, hi int, names []string, base int) (uint64, erro
 				return 0, fmt.Errorf("bad range %q", item)
 			}
 		}
-		for n := from; n <= to; n += step {
+		for n := from; ; n += step {
 			bits |= 1 << n
+			if step > to-n { // not n+step > to: a huge step would overflow
+				break
+			}
 		}
 	}
 	return bits, nil
@@ -277,18 +280,27 @@ func cronField(field string, lo, hi int, names []string, base int) (uint64, erro
 func (s cronSchedule) next(t time.Time) time.Time {
 	loc := t.Location()
 	t = t.Truncate(time.Minute).Add(time.Minute)
+	// to is the start of the next month, day or hour, in local time; where
+	// that time does not exist (summer time starts) it may not be later than
+	// t, so then an hour on: every step moves on and the search ends.
+	to := func(next time.Time) time.Time {
+		if next.After(t) {
+			return next
+		}
+		return t.Add(time.Hour - time.Duration(t.Minute())*time.Minute)
+	}
 	for end := t.AddDate(5, 0, 0); t.Before(end); {
 		if s.month&(1<<int(t.Month())) == 0 {
-			t = time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, loc)
+			t = to(time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, loc))
 			continue
 		}
 		dom, dow := s.dom&(1<<t.Day()) != 0, s.dow&(1<<int(t.Weekday())) != 0
 		if day := dom && dow; !day && !(s.eitherDay && (dom || dow)) {
-			t = time.Date(t.Year(), t.Month(), t.Day()+1, 0, 0, 0, 0, loc)
+			t = to(time.Date(t.Year(), t.Month(), t.Day()+1, 0, 0, 0, 0, loc))
 			continue
 		}
 		if s.hour&(1<<t.Hour()) == 0 {
-			t = time.Date(t.Year(), t.Month(), t.Day(), t.Hour()+1, 0, 0, 0, loc)
+			t = to(time.Date(t.Year(), t.Month(), t.Day(), t.Hour()+1, 0, 0, 0, loc))
 			continue
 		}
 		if s.min&(1<<t.Minute()) == 0 {
@@ -299,6 +311,9 @@ func (s cronSchedule) next(t time.Time) time.Time {
 	}
 	return time.Time{}
 }
+
+// jobRetry is how soon a VM that could not wake up for a job tries again.
+const jobRetry = 15 * time.Minute
 
 // wakeJobs wakes the sleeping VMs whose next job is due within wakeLead.
 func (b *Box) wakeJobs(now time.Time) {
@@ -329,7 +344,12 @@ func (b *Box) wakeForJob(v VM, now time.Time) {
 		err = b.hv.Wake(cur)
 	}
 	if err != nil {
+		// Next time: its next run, or another try soon. A timer's next run
+		// is known only to the VM, so a skipped one would never come again.
 		next, _ := nextJob(cur.Schedule, cur.NextJob)
+		if retry := now.Add(jobRetry); next.IsZero() || next.After(retry) {
+			next = retry
+		}
 		log.Printf("%s: %s did not wake up for %s at %s, next at %s: %v", cur.Owner, cur.Name, what,
 			cur.NextJob.Local().Format(time.TimeOnly), next.Local().Format(time.DateTime), err)
 		if err := b.store.SetNextJob(cur.Name, next, cur.Schedule); err != nil {

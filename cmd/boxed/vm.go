@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -208,16 +209,58 @@ func (h *Hypervisor) flush(v VM) error {
 // the VM at v's address shows a certificate for v's name: another VM that
 // took the address meanwhile is not sent cmd.
 func (h *Hypervisor) inVM(v VM, timeout time.Duration, cmd string) ([]byte, error) {
+	return h.inVMWithKey(v, "", timeout, cmd)
+}
+
+// inVMWithKey is inVM trusting only hostKey (as hostKey returns it), not
+// any VM with a certificate for the name; empty: inVM.
+func (h *Hypervisor) inVMWithKey(v VM, hostKey string, timeout time.Duration, cmd string) ([]byte, error) {
+	alias := v.Name + "." + h.SSHSuffix
 	known := filepath.Join(h.StateDir, "vm_known_hosts")
 	line := "@cert-authority *." + h.SSHSuffix + " " + string(gossh.MarshalAuthorizedKey(h.HostCA.PublicKey()))
-	if b, err := os.ReadFile(known); err != nil || string(b) != line {
+	algos := []string{}
+	if hostKey != "" {
+		f, err := os.CreateTemp(h.StateDir, "vm_known_hosts-*")
+		if err != nil {
+			return nil, err
+		}
+		defer os.Remove(f.Name())
+		_, err = f.WriteString(alias + " " + hostKey)
+		if err = errors.Join(err, f.Close()); err != nil {
+			return nil, err
+		}
+		known = f.Name()
+		algos = []string{"-o", "HostKeyAlgorithms=ssh-ed25519"}
+	} else if b, err := os.ReadFile(known); err != nil || string(b) != line {
 		if err := os.WriteFile(known, []byte(line), 0o644); err != nil {
 			return nil, err
 		}
 	}
-	return h.exec(timeout, "ssh", "-i", h.HostKeyPath, "-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
-		"-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile="+known, "-o", "HostKeyAlias="+v.Name+"."+h.SSHSuffix,
-		"-o", "LogLevel=ERROR", "exedev@"+v.IP(), cmd)
+	args := append([]string{"-i", h.HostKeyPath, "-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
+		"-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + known, "-o", "HostKeyAlias=" + alias}, algos...)
+	return h.exec(timeout, "ssh", append(args, "-o", "LogLevel=ERROR", "exedev@"+v.IP(), cmd)...)
+}
+
+// hostKey is the SSH host key of the VM named name as its config disk has
+// it ("ssh-ed25519 AAAA..."): it changes with every VM made, copied or
+// forked, unlike the name its certificate is for.
+func (h *Hypervisor) hostKey(name string) (string, error) {
+	f, err := os.Open(h.config(name))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	tr := tar.NewReader(f)
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			return "", fmt.Errorf("no host key in the configuration of %s: %v", name, err)
+		}
+		if hdr.Name == "etc/ssh/ssh_host_ed25519_key.pub" {
+			b, err := io.ReadAll(io.LimitReader(tr, 4096))
+			return strings.TrimSpace(string(b)), err
+		}
+	}
 }
 
 // StartAgent starts a Shelley conversation in v on prompt and returns its
@@ -415,7 +458,7 @@ func (h *Hypervisor) agentsMD(v VM) string {
 	return fmt.Sprintf("You are running in a boxe VM named %[1]s: a microVM on the team's own infrastructure. It is similar to exe.dev, but `ssh exe.dev` is not available here.\n\n"+
 		"- Ubuntu, user `exedev` with passwordless sudo, persistent disk. Docker works.\n"+
 		"- Terminal sessions that outlive the SSH connection: `scroll [name]` (exe-scroll). Drive one without attaching: `exe-scroll send-keys ~/.local/state/scroll/<name>.sock 'make test' Enter`, `exe-scroll capture-pane ~/.local/state/scroll/<name>.sock`.\n"+
-		"- Internet works, unless your user restricted this VM to its integrations (`ssh boxe egress`, from their computer): then nothing else answers and only integration names resolve. The team's LAN, the host and the other VMs are not reachable from here.\n"+
+		"- Internet works, unless your user restricted this VM to its integrations (`ssh boxe egress`, from their computer): then only the integrations and the models' gateway answer (without the providers' web search, web fetch and MCP tools), and only integration names resolve. The team's LAN, the host and the other VMs are not reachable from here.\n"+
 		"- Integrations: your user keeps API secrets on the host and attaches them to this VM (`ssh boxe integrations`, from their computer). Call one at http://<integration>.int.%[3]s/<path>, plain HTTP (e.g. `curl http://stripe.int.%[3]s/v1/customers`): the host adds the credentials on the way out, so you never see the keys; do not ask for them nor send your own. An integration not attached to this VM answers 403.\n"+
 		"- GitHub, if your user attached it: `git clone http://github.int.%[3]s/OWNER/REPO` (fetch and push too, unless it is read-only) and the API at http://github.int.%[3]s/api/ (e.g. `curl http://github.int.%[3]s/api/user`).\n"+
 		"%[4]s\n%[2]s\n%[5]s"+

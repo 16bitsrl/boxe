@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -145,6 +146,12 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer g.end(v)
+	if v.Egress == egressIntegrations && r.Method != http.MethodGet && r.Method != http.MethodHead {
+		if err := noWebTools(r); err != nil {
+			http.Error(w, "boxe gateway: "+err.Error(), http.StatusForbidden)
+			return
+		}
+	}
 	g.proxy(p, v, keys[p.name]).ServeHTTP(w, r)
 }
 
@@ -233,6 +240,35 @@ func (g *Gateway) proxy(p llmProvider, v VM, key string) http.Handler {
 			http.Error(w, "boxe gateway: "+err.Error(), http.StatusBadGateway)
 		},
 	}
+}
+
+// noWebTools refuses a request that asks the provider to go on the web for
+// the VM (search, fetch, MCP servers): a VM restricted to its integrations
+// would reach the internet through them. It reads the body, up to
+// requestLimit, and puts it back.
+func noWebTools(r *http.Request) error {
+	body, err := io.ReadAll(io.LimitReader(r.Body, requestLimit+1))
+	r.Body.Close()
+	if err != nil || len(body) > requestLimit {
+		return errors.New("this VM reaches only its integrations: requests over 4 MiB cannot be checked for web tools")
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	var req struct {
+		Tools            []struct{ Type string }
+		MCPServers       json.RawMessage `json:"mcp_servers"`
+		WebSearchOptions json.RawMessage `json:"web_search_options"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return errors.New("this VM reaches only its integrations: the request is not JSON, so it cannot be checked for web tools")
+	}
+	web := req.MCPServers != nil || req.WebSearchOptions != nil
+	for _, t := range req.Tools {
+		web = web || strings.HasPrefix(t.Type, "web_") || strings.HasPrefix(t.Type, "mcp")
+	}
+	if web {
+		return errors.New("this VM reaches only its integrations, so the provider's web search, web fetch and MCP tools are off (ssh boxe egress)")
+	}
+	return nil
 }
 
 // ownKeyMissing answers a request that needs the owner's key when there is none.

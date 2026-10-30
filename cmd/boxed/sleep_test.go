@@ -507,3 +507,31 @@ func TestJobWakeRespectsTheQuota(t *testing.T) {
 		t.Errorf("a1 %s, b1 %s", a, b1)
 	}
 }
+
+// A VM that could not wake up for a job tries again a little later, rather
+// than waiting for a next run its schedule may not have (a systemd timer
+// only says when it runs next).
+func TestJobWakeRetries(t *testing.T) {
+	c := newCLI(t, "alice")
+	b := c.box
+	b.limits = Limits{UserMem: 4096}
+	c.must("alice", "new a1 --mem 2G")
+	c.must("alice", "new b1 --mem 2G")
+	c.host.schedule["a1"] = cronAt(time.Now().Add(time.Hour))
+	c.must("alice", "sleep a1")
+	c.must("alice", "new c1 --mem 2G")
+	b.busy("b1", 1)
+	b.busy("c1", 1)
+	v, _ := b.store.Get("a1")
+	now := v.NextJob.Add(-wakeLead)
+	b.wakeJobs(now)
+	v, _ = b.store.Get("a1")
+	if want := now.Add(jobRetry); !v.NextJob.Equal(want) {
+		t.Fatalf("next try %s, want %s", v.NextJob, want)
+	}
+	b.busy("b1", -1)
+	b.wakeJobs(v.NextJob.Add(-wakeLead))
+	if s := b.hv.State("a1"); s != "running" {
+		t.Errorf("a1 %s on the second try", s)
+	}
+}

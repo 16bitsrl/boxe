@@ -180,3 +180,39 @@ func TestUserTimer(t *testing.T) {
 		t.Error("a masked timer counts")
 	}
 }
+
+// A crontab in the VM is untrusted: a huge step must not crash boxed.
+func TestCronHugeStep(t *testing.T) {
+	s, err := parseCron("1-59/9223372036854775807 * * * *")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.min != 1<<1 {
+		t.Errorf("minutes %b, want only 1", s.min)
+	}
+}
+
+// Across a change to summer time the hour that does not exist is skipped,
+// and the search ends.
+func TestCronNextAcrossDST(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip(err)
+	}
+	s, _ := parseCron("0 3 * * *")
+	from := time.Date(2027, 3, 14, 0, 30, 0, 0, ny)
+	done := make(chan time.Time)
+	go func() { done <- s.next(from) }()
+	select {
+	case got := <-done:
+		if want := time.Date(2027, 3, 14, 3, 0, 0, 0, ny); !got.Equal(want) {
+			t.Errorf("next = %v, want %v", got, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("next does not end")
+	}
+	s, _ = parseCron("30 2 * * *") // 2:30 does not exist that day
+	if got := s.next(from); got.Day() != 15 {
+		t.Errorf("next 2:30 = %v, want the day after", got)
+	}
+}

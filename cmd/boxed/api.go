@@ -232,18 +232,22 @@ func (b *Box) cmdExec(w io.Writer, user, line string) error {
 	if err := b.wake(user, name); err != nil {
 		return err
 	}
+	// The VM's own host key, read with the VM under the lock: a VM that
+	// takes its name and address after it is deleted has another.
 	b.mu.RLock()
 	v, err := b.owned(user, name)
+	var hostKey string
+	if err == nil {
+		hostKey, err = b.hv.hostKey(v.Name)
+	}
 	b.mu.RUnlock()
 	if err != nil {
 		return err
 	}
 	// Running a command is using the VM: it does not go to sleep meanwhile.
-	// inVM checks the VM's certificate, so another VM that took its address
-	// meanwhile is not sent the command.
 	b.busy(v.Name, 1)
 	defer b.busy(v.Name, -1)
-	out, err := b.hv.inVM(v, execTimeout, cmd)
+	out, err := b.hv.inVMWithKey(v, hostKey, execTimeout, cmd)
 	var exit interface{ ExitCode() int }
 	switch {
 	case err == nil:

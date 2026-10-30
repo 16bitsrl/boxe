@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cgi"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -558,5 +559,21 @@ func TestGitHubIntegration(t *testing.T) {
 	// Only git and the API: not github.com's pages with the token.
 	if res, err := client.Get("http://github.int.boxe/settings/tokens"); err != nil || res.StatusCode != http.StatusNotFound {
 		t.Errorf("github.com page: %v %v", res, err)
+	}
+}
+
+// Integrations reach public addresses only, and none of the host's own: a
+// host with a public address would otherwise be reachable from its VMs.
+func TestPublicAddresses(t *testing.T) {
+	own := netip.MustParseAddr("203.0.113.7")
+	for ip, want := range map[string]bool{
+		"93.184.215.14": true, "2606:4700::1111": true,
+		"203.0.113.7": false, "::ffff:203.0.113.7": false,
+		"10.42.0.1": false, "192.168.1.1": false, "100.89.255.112": false, "127.0.0.1": false,
+		"169.254.169.254": false, "::1": false, "fd00::1": false, "0.0.0.0": false,
+	} {
+		if got := public(netip.MustParseAddr(ip), []netip.Addr{own}); got != want {
+			t.Errorf("%s: %v, want %v", ip, got, want)
+		}
 	}
 }

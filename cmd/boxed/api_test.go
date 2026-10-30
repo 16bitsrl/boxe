@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -312,5 +313,33 @@ func TestPromptKnowsNewCommands(t *testing.T) {
 	}
 	if h := c.must("alice", "help"); !strings.Contains(h, "exec <name> <command>") || !strings.Contains(h, "token new") {
 		t.Errorf("help:\n%s", h)
+	}
+}
+
+// exec trusts only the host key of the VM it looked up, read from its
+// config disk under the lock, not any VM certified for the name: another
+// VM that takes the name and address meanwhile does not get the command.
+func TestExecPinsTheVMsHostKey(t *testing.T) {
+	c := newCLI(t, "alice")
+	c.must("alice", "new test")
+	want, err := c.box.hv.hostKey("test")
+	if err != nil || !strings.HasPrefix(want, "ssh-ed25519 ") {
+		t.Fatalf("host key of test: %q %v", want, err)
+	}
+	var known string
+	c.host.inVM = func(cmd string) ([]byte, error) {
+		last := c.host.cmds[len(c.host.cmds)-1]
+		_, f, _ := strings.Cut(last, "UserKnownHostsFile=")
+		f, _, _ = strings.Cut(f, " ")
+		b, _ := os.ReadFile(f)
+		known = string(b)
+		if !strings.Contains(last, "HostKeyAlgorithms=ssh-ed25519 ") {
+			t.Errorf("ssh may take a certificate: %s", last)
+		}
+		return nil, nil
+	}
+	c.must("alice", "exec test true")
+	if known != "test.boxe "+want {
+		t.Errorf("known hosts %q, want the VM's own key %q", known, want)
 	}
 }
