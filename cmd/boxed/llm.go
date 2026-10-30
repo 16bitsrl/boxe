@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"path"
 	"regexp"
@@ -106,11 +107,15 @@ func (g *Gateway) vmAt(addr string) (VM, bool) {
 	if err != nil {
 		return VM{}, false
 	}
-	ip := net.ParseIP(host).To4()
-	if ip == nil || ip[0] != 10 || ip[1] != 42 {
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
 		return VM{}, false
 	}
-	v, err := g.store.ByIndex(int(ip[2])<<8 | int(ip[3]))
+	idx, ok := vmAt(ip)
+	if !ok {
+		return VM{}, false
+	}
+	v, err := g.store.ByIndex(idx)
 	return v, err == nil
 }
 

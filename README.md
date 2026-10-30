@@ -112,7 +112,7 @@ before you trust it with anything.
   conversation in the new VM and prints its link.
 - **LLM gateway**: each member saves their own Anthropic and OpenAI API keys
   once, with `ssh boxe llm set anthropic`, and all their VMs use them. The
-  keys stay on the host: VMs call the gateway (`-llm-gateway`, on the bridge
+  keys stay on the host: VMs call the gateway (`-llm-port`, on the bridge
   address), which knows the VM by its address, puts the owner's key in the
   request and counts the tokens of the answer, streams included. Login shells
   in the VM get `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` and a placeholder
@@ -354,8 +354,11 @@ C8i/M8i/R8i).
    - `useradd --system --no-create-home --shell /usr/sbin/nologin boxe-vm`.
    - Install `scripts/net-setup.sh` in `/usr/local/sbin`, with
      `/etc/boxe/net.conf` setting `BOXE_PROXY=<proxy IP>` if the TLS proxy is
-     another machine. The VMs' network is always `10.42.0.0/16` on `br0`:
-     it must not be in use on the host already.
+     another machine. The VMs' network is `10.42.0.0/16` on `br0`; if that
+     is in use on the host or its networks, set another one in the same file,
+     e.g. `BOXE_SUBNET=10.77.0.0/16` (IPv4, from /8 to /24; a /24 holds 253
+     VMs). `boxed` reads it from `br0`. If you change `BOXE_LLM_PORT`, give
+     `boxed` the same `-llm-port`.
    - Generate a key pair for the host to reach VMs:
      `ssh-keygen -t ed25519 -N '' -f /etc/boxe/id_ed25519`.
    - List the team in `/etc/boxe/users` (see `scripts/users.example`): a

@@ -367,14 +367,14 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 	files := []file{
 		{"etc/hostname", host + "\n", 0o644, false},
 		{"etc/hosts", fmt.Sprintf("127.0.0.1 localhost\n127.0.1.1 %s\n::1 localhost ip6-localhost ip6-loopback\n", names), 0o644, false},
-		{"etc/resolv.conf", "nameserver " + gatewayIP + "\n", 0o644, false},
+		{"etc/resolv.conf", "nameserver " + gatewayIP() + "\n", 0o644, false},
 		{"etc/machine-id", hex.EncodeToString(machineID) + "\n", 0o444, false},
 		{"etc/ssh/ssh_host_ed25519_key", hostKey, 0o600, false},
 		{"etc/ssh/ssh_host_ed25519_key.pub", hostPub, 0o644, false},
 		{"etc/ssh/ssh_host_ed25519_key-cert.pub", hostCert, 0o644, false},
 		{"home/exedev/.ssh/authorized_keys", authorizedKeys + h.HostPubKey, 0o600, true},
 		{"etc/boxe/web-domain", h.WebDomain + "\n", 0o644, false},
-		{"etc/boxe/net", fmt.Sprintf("ADDRESS=%s/16\nGATEWAY=10.42.0.1\nMAC=%s\n", v.IP(), v.MAC()), 0o644, false},
+		{"etc/boxe/net", fmt.Sprintf("ADDRESS=%s/%d\nGATEWAY=%s\nMAC=%s\n", v.IP(), vmNet.Bits(), gatewayIP(), v.MAC()), 0o644, false},
 		{"home/exedev/.config/boxe/AGENTS.md", h.agentsMD(v), 0o644, true},
 		{"etc/boxe/id", hex.EncodeToString(id) + "\n", 0o644, false},
 	}
@@ -618,7 +618,7 @@ func (h *Hypervisor) start(v VM, restore bool) error {
 			"--restore", "source_url=file://"+h.sleepDir(v.Name)+",memory_restore_mode=copyonwrite,resume=false")
 		return h.run("systemd-run", args...)
 	}
-	cmdline := fmt.Sprintf("console=ttyS0 root=/dev/vda rw init=/usr/local/bin/boxe-init ip=%s::10.42.0.1:255.255.0.0:%s:eth0:off quiet", v.IP(), v.Name)
+	cmdline := h.cmdline(v)
 	args = append(args, "/usr/local/bin/cloud-hypervisor",
 		"--api-socket", sock(v.Name),
 		"--kernel", h.Kernel,
@@ -635,6 +635,12 @@ func (h *Hypervisor) start(v VM, restore bool) error {
 		"--serial", "tty",
 		"--console", "off")
 	return h.run("systemd-run", args...)
+}
+
+// cmdline is v's kernel command line: its address on the VMs' network.
+func (h *Hypervisor) cmdline(v VM) string {
+	return fmt.Sprintf("console=ttyS0 root=/dev/vda rw init=/usr/local/bin/boxe-init ip=%s::%s:%s:%s:eth0:off quiet",
+		v.IP(), gatewayIP(), vmMask(), v.Name)
 }
 
 // Stop powers v off: the unit asks the guest to shut down (see Start) and

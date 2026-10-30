@@ -1,22 +1,33 @@
 #!/bin/bash
-# microVM network on the host: bridge br0 10.42.0.1/16, NAT to the outside,
+# microVM network on the host: bridge br0 on BOXE_SUBNET (10.42.0.0/16 if not
+# set in /etc/boxe/net.conf), the host on its first address, NAT to the outside,
 # VMs isolated from each other, from the host and from private networks.
 # Idempotent: can run again while VMs are up (boxed's per-VM entries stay).
 # Every rule set is replaced atomically, so isolation never lapses during a
 # reload, and only chains of ours are rewritten.
 set -euo pipefail
 if [ -r /etc/boxe/net.conf ]; then . /etc/boxe/net.conf; fi
-# Fixed: boxed gives VMs their addresses in it and listens on the gateway.
-SUBNET=10.42.0.0/16
-GATEWAY=10.42.0.1/16
+# boxed reads it back from br0: VMs get their addresses in it, and boxed
+# listens on the first one. An IPv4 network from /8 to /24.
+SUBNET=${BOXE_SUBNET:-10.42.0.0/16}
+NET=${SUBNET%/*} BITS=${SUBNET#*/}
+if ! [[ $NET =~ ^([0-9]+\.){3}0$ && $BITS =~ ^[0-9]+$ ]] || ((BITS < 8 || BITS > 24)); then
+	echo "BOXE_SUBNET=$SUBNET: an IPv4 network from /8 to /24, like 10.42.0.0/16" >&2
+	exit 1
+fi
+GATEWAY=${NET%.0}.1/$BITS
 GW=${GATEWAY%/*}   # boxed listens here for the VMs: integrations (80) and DNS (53)
 PROXY=${BOXE_PROXY:-}   # the only remote client of boxed's web port (the TLS proxy); empty: local only
 WEB_PORT=${BOXE_WEB_PORT:-8080}
-LLM_PORT=${BOXE_LLM_PORT:-2998} # boxed's LLM gateway, the one port of the host VMs reach
+LLM_PORT=${BOXE_LLM_PORT:-2998} # boxed's LLM gateway (its -llm-port)
 PRIVATE=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16
 
 ip link show br0 >/dev/null 2>&1 || ip link add br0 type bridge
 ip addr replace "$GATEWAY" dev br0
+# Only that address: boxed takes the network from br0's.
+for a in $(ip -4 -o addr show dev br0 | awk '{print $4}'); do
+	[ "$a" = "$GATEWAY" ] || ip addr del "$a" dev br0
+done
 ip link set br0 up
 sysctl -qw net.ipv4.ip_forward=1
 

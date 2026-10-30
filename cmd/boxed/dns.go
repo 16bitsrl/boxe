@@ -127,7 +127,7 @@ func (d *DNS) reply(h dnsmessage.Header, q dnsmessage.Question, rcode dnsmessage
 	b.StartAnswers()
 	if gateway {
 		b.AResource(dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 300},
-			dnsmessage.AResource{A: netip.MustParseAddr(gatewayIP).As4()})
+			dnsmessage.AResource{A: vmNet.Addr().As4()})
 	}
 	out, _ := b.Finish()
 	return out

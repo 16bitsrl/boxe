@@ -56,7 +56,7 @@ func main() {
 		minFree     = flag.Int64("min-free-gb", 20, "refuse new VMs when the pool has less free space (GB)")
 		sleepDir    = flag.String("sleep-dir", "", "where sleeping VMs keep their memory, e.g. /boxe/sleep (a ZFS dataset); empty: VMs never sleep")
 		sleepAfter  = flag.Duration("sleep-after", 0, "put a VM to sleep after this long unused (no SSH or web connection, little CPU and traffic), e.g. 30m; 0: never")
-		llmAddr     = flag.String("llm-gateway", "10.42.0.1:2998", "address on the VM bridge of the LLM gateway, which adds the members' API keys (ssh boxe llm); empty to disable")
+		llmPort     = flag.Int("llm-port", 2998, "port of the LLM gateway on the VMs' network, which adds the members' API keys (ssh boxe llm); 0 to disable")
 		powerOffVM  = flag.String("power-off", "", "internal, run by systemd: shut down the VM behind this API socket (hypervisor pid in $MAINPID)")
 		front       = flag.Bool("front", false, "run as boxe-front: hold the SSH and web connections of users (-ts-hostname, -listen, -http), so that restarting boxed does not drop them; needs -sockets")
 		sockets     = flag.String("sockets", "", "directory of the sockets between boxed -front and boxed, e.g. /run/boxe/front; empty: boxed holds the connections itself")
@@ -151,15 +151,20 @@ func main() {
 	if *sockets != "" {
 		b.front = &frontClient{sock: filepath.Join(*sockets, frontSock)}
 	}
+	// The VMs' network, as boxe-net.service made br0 (BOXE_SUBNET).
+	if err := vmNetFromBridge(); err != nil {
+		log.Fatal(err)
+	}
 	if err := b.hv.checkSetup(exec.LookPath); err != nil {
 		log.Fatal(err)
 	}
 
-	if *llmAddr != "" {
-		if ln, err := net.Listen("tcp", *llmAddr); err != nil {
+	if *llmPort != 0 {
+		llmAddr := net.JoinHostPort(gatewayIP(), strconv.Itoa(*llmPort))
+		if ln, err := net.Listen("tcp", llmAddr); err != nil {
 			log.Printf("LLM gateway off: %v", err)
 		} else {
-			b.llm = newGateway(store, *llmAddr)
+			b.llm = newGateway(store, llmAddr)
 			b.hv.LLMGateway = b.llm.URL()
 			srv := &http.Server{Handler: b.llm, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, ConnContext: b.llm.ConnContext}
 			go func() {
@@ -182,13 +187,13 @@ func main() {
 	}
 	// For the VMs, on the gateway: integrations and DNS (integrations.go, dns.go).
 	d := &DNS{Suffix: *sshSuffix, Upstream: splitList(*dns), Closed: b.dnsClosed}
-	pc, err := net.ListenPacket("udp", gatewayIP+":53")
+	pc, err := net.ListenPacket("udp", gatewayIP()+":53")
 	if err != nil {
 		log.Fatal(err)
 	}
 	go func() { log.Fatal(d.ServeUDP(pc)) }()
 	for port, serve := range map[string]func(net.Listener) error{"53": d.ServeTCP, "80": b.proxy().Serve} {
-		ln, err := net.Listen("tcp", gatewayIP+":"+port)
+		ln, err := net.Listen("tcp", gatewayIP()+":"+port)
 		if err != nil {
 			log.Fatal(err)
 		}

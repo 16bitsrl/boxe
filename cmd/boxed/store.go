@@ -27,7 +27,7 @@ type VM struct {
 	Schedule  string    // what boxe-agent said was scheduled in it when it went to sleep
 }
 
-func (v VM) IP() string  { return fmt.Sprintf("10.42.%d.%d", v.Index>>8, v.Index&255) }
+func (v VM) IP() string  { return vmAddr(v.Index).String() }
 func (v VM) MAC() string { return fmt.Sprintf("02:42:0a:2a:%02x:%02x", v.Index>>8, v.Index&255) }
 
 // same tells whether o is still v: a VM deleted meanwhile may have passed
@@ -197,14 +197,20 @@ func (s *Store) List(owner string) ([]VM, error) {
 	return vms, rows.Err()
 }
 
-// Insert records v with the lowest free index (from 2: .0.1 is the host).
+// Insert records v with the lowest free index (from 2: 1 is the host),
+// its place in the VMs' network.
 func (s *Store) Insert(v *VM) error {
-	err := s.db.QueryRow(`SELECT COALESCE(MIN(i), 2) FROM (
+	var idx sql.NullInt64
+	err := s.db.QueryRow(`SELECT MIN(i) FROM (
 		SELECT 2 AS i WHERE NOT EXISTS (SELECT 1 FROM vms WHERE idx = 2)
-		UNION SELECT idx + 1 FROM vms WHERE idx + 1 < 65535 AND idx + 1 NOT IN (SELECT idx FROM vms))`).Scan(&v.Index)
+		UNION SELECT idx + 1 FROM vms WHERE idx + 1 <= ? AND idx + 1 NOT IN (SELECT idx FROM vms))`, maxIndex()).Scan(&idx)
 	if err != nil {
 		return err
 	}
+	if !idx.Valid {
+		return errors.New("no free address in the VMs' network")
+	}
+	v.Index = int(idx.Int64)
 	v.Created = time.Now().UTC().Truncate(time.Second) // as stored
 	if v.Egress == "" {
 		v.Egress = egressAll

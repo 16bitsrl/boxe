@@ -29,9 +29,6 @@ import (
 const (
 	kindHTTP   = "http"
 	kindGitHub = "github"
-	// gatewayIP is the host on br0 (net-setup.sh): the integrations proxy
-	// and the DNS server listen there.
-	gatewayIP = "10.42.0.1"
 
 	egressAll          = "all"
 	egressIntegrations = "integrations" // only the gateway: integrations and their DNS names
@@ -325,16 +322,6 @@ func (b *Box) cmdEgress(o output, user string, args []string) error {
 	}
 	o.print(b.vmJSON(v), text)
 	return nil
-}
-
-// vmAt is the index of the VM whose address is ip, if ip is on br0.
-func vmAt(ip netip.Addr) (int, bool) {
-	ip = ip.Unmap()
-	if !netip.MustParsePrefix("10.42.0.0/16").Contains(ip) {
-		return 0, false
-	}
-	a := ip.As4()
-	return int(a[2])<<8 | int(a[3]), true
 }
 
 // caller is the VM at the source address of a request. Called with b.mu held.
