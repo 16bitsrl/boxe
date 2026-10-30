@@ -89,8 +89,9 @@ before you trust it with anything.
   from the newest version.
 - **Panel**: `https://<domain>`, behind team login, lists your VMs (all of
   them for an admin) with their links and usage, and shows your account: the
-  SSH keys boxe lets in, how to set up SSH, and logging out everywhere. It is
-  read only: changes are made over SSH.
+  SSH keys boxe lets in, how to set up SSH, and logging out everywhere. The
+  owner of a VM, and an admin, can restart it or delete it there (typing its
+  name); everything else is done over SSH.
 
 ## Commands
 
@@ -150,6 +151,12 @@ Once per computer: `ssh boxe ssh-config >> ~/.ssh/config` and
   change something, and WebSockets, unless they come from their own page,
   so other VMs' pages cannot drive them with the owner's session. They
   cannot be shared.
+- **The panel's actions come only from the panel.** VM pages are on the
+  same site as `https://<domain>`, so the browser sends them the panel's
+  cookie too. Restarting or deleting a VM is a POST that boxed accepts only
+  from the panel's own origin and with a token bound to the session, which
+  VM pages cannot read; the owner, or an admin, must type the VM's name to
+  delete it.
 - **VMs are untrusted.**
   - Each runs in its own Cloud Hypervisor process. The process runs as an
     unprivileged user with no capabilities, can open only its own disks,

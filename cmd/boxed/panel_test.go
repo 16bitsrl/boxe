@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,30 @@ func newPanelTest(t *testing.T) *panelTest {
 func (b *browser) page(path string) (int, string) {
 	res := b.get("https://boxe.example"+path, nil)
 	return res.StatusCode, body(res)
+}
+
+// fromPanel are the headers a browser sends with a form of the panel.
+var fromPanel = http.Header{"Sec-Fetch-Site": {"same-origin"}, "Origin": {"https://boxe.example"}}
+
+// post sends form to path of the panel, with header.
+func (b *browser) post(path string, form url.Values, header http.Header) *http.Response {
+	h := http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}
+	for k, v := range header {
+		h[k] = v
+	}
+	return b.sendBody("POST", "https://boxe.example"+path, h, form.Encode())
+}
+
+var csrfField = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
+
+// csrf is the token in the forms of page.
+func csrf(t *testing.T, page string) string {
+	t.Helper()
+	m := csrfField.FindStringSubmatch(page)
+	if m == nil {
+		t.Fatalf("no csrf field in:\n%s", page)
+	}
+	return m[1]
 }
 
 // Opening the panel logs the member in at the IdP, then shows their VMs,
@@ -227,5 +252,155 @@ func TestPanelFaviconNeedsNoLogin(t *testing.T) {
 	res := b.do("https://boxe.example/favicon.ico", nil)
 	if res.StatusCode != 200 || !strings.HasPrefix(res.Header.Get("Content-Type"), "image/") || len(res.Cookies()) != 0 {
 		t.Errorf("%d %q, cookies %v", res.StatusCode, res.Header.Get("Content-Type"), res.Cookies())
+	}
+}
+
+// exists says whether the VM name is still there.
+func (pt *panelTest) exists(name string) bool {
+	_, err := pt.c.box.store.Get(name)
+	return err == nil
+}
+
+// forget clears the commands the host ran so far.
+func (pt *panelTest) forget() {
+	pt.c.host.mu.Lock()
+	pt.c.host.cmds = nil
+	pt.c.host.mu.Unlock()
+}
+
+// The owner restarts their VM from its page, and deletes it once they type
+// its name.
+func TestPanelRestartAndDelete(t *testing.T) {
+	pt := newPanelTest(t)
+	b := pt.browser("member")
+	_, page := b.page("/vm/test")
+	token := csrf(t, page)
+	for _, want := range []string{`action="/vm/test/restart"`, `action="/vm/test/delete"`, `name="confirm"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("no %q in:\n%s", want, page)
+		}
+	}
+
+	pt.forget()
+	res := b.post("/vm/test/restart", url.Values{"csrf": {token}}, fromPanel)
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/vm/test" {
+		t.Errorf("restart: %d %q\n%s", res.StatusCode, res.Header.Get("Location"), body(res))
+	}
+	if !pt.c.host.ran("systemctl stop boxe-vm-test") || !pt.c.host.ran("systemd-run") {
+		t.Errorf("not restarted: %v", pt.c.host.cmds)
+	}
+
+	for _, typed := range []string{"", "tes", "nap"} {
+		res := b.post("/vm/test/delete", url.Values{"csrf": {token}, "confirm": {typed}}, fromPanel)
+		if page := body(res); res.StatusCode != http.StatusBadRequest || !strings.Contains(page, "Type test") || !pt.exists("test") {
+			t.Errorf("confirm %q: %d\n%s", typed, res.StatusCode, page)
+		}
+	}
+	res = b.post("/vm/test/delete", url.Values{"csrf": {token}, "confirm": {"test"}}, fromPanel)
+	if page := body(res); res.StatusCode != 200 || !strings.Contains(page, "test is deleted") || pt.exists("test") {
+		t.Errorf("delete: %d\n%s", res.StatusCode, page)
+	}
+	if code, _ := b.page("/vm/test"); code != 404 {
+		t.Errorf("deleted VM's page: %d", code)
+	}
+}
+
+// A VM's page is on the same site as the panel, so its forms reach the panel
+// with the member's cookie: they must do nothing. Neither does a form without
+// the token of this very session, nor a GET.
+func TestPanelActionsOnlyFromThePanel(t *testing.T) {
+	pt := newPanelTest(t)
+	b := pt.browser("member")
+	_, page := b.page("/vm/test")
+	token := csrf(t, page)
+	time.Sleep(2 * time.Millisecond)
+	other := pt.browser("member") // alice again, logged in later
+	_, otherPage := other.page("/vm/test")
+	_, bobPage := pt.browser("bob").page("/vm/bobs-vm")
+	if csrf(t, otherPage) == token || csrf(t, bobPage) == token {
+		t.Fatal("two sessions share a token")
+	}
+
+	fromVM := http.Header{"Sec-Fetch-Site": {"same-site"}, "Origin": {"https://test.boxe.example"}}
+	oldBrowser := http.Header{"Origin": {"https://test.boxe.example"}} // no Sec-Fetch-Site
+	pt.forget()
+	for _, c := range []struct {
+		name   string
+		b      *browser
+		form   url.Values
+		header http.Header
+	}{
+		{"from a VM's page", b, url.Values{"csrf": {token}, "confirm": {"test"}}, fromVM},
+		{"from a VM's page, old browser", b, url.Values{"csrf": {token}, "confirm": {"test"}}, oldBrowser},
+		{"no token", b, url.Values{"confirm": {"test"}}, fromPanel},
+		{"forged token", b, url.Values{"csrf": {"x" + token}, "confirm": {"test"}}, fromPanel},
+		{"token of another session", other, url.Values{"csrf": {token}, "confirm": {"test"}}, fromPanel},
+		{"token of bob", b, url.Values{"csrf": {csrf(t, bobPage)}, "confirm": {"test"}}, fromPanel},
+		{"no session", pt.browser("member"), url.Values{"csrf": {token}, "confirm": {"test"}}, fromPanel},
+	} {
+		for _, action := range []string{"restart", "delete"} {
+			res := c.b.post("/vm/test/"+action, c.form, c.header)
+			if res.StatusCode != http.StatusForbidden {
+				t.Errorf("%s, %s: %d", c.name, action, res.StatusCode)
+			}
+		}
+	}
+	// The member, still logged in, is not asked to log in again.
+	if page := body(b.post("/vm/test/delete", url.Values{"csrf": {token}}, fromVM)); strings.Contains(page, "Log in") || !strings.Contains(page, `href="/"`) {
+		t.Errorf("refused page:\n%s", page)
+	}
+	res := b.do("https://boxe.example/vm/test/delete?"+url.Values{"csrf": {token}, "confirm": {"test"}}.Encode(), fromPanel)
+	if res.StatusCode != http.StatusMethodNotAllowed && res.StatusCode != http.StatusNotFound {
+		t.Errorf("GET delete: %d", res.StatusCode)
+	}
+	if !pt.exists("test") || pt.c.host.ran("systemctl stop") {
+		t.Errorf("the VM was touched: %v", pt.c.host.cmds)
+	}
+}
+
+// A member cannot touch someone else's VM, as over SSH; the admin can.
+func TestPanelActionsOnOthersVMs(t *testing.T) {
+	pt := newPanelTest(t)
+	b := pt.browser("member")
+	_, page := b.page("/vm/test")
+	token := csrf(t, page)
+	pt.forget()
+	for _, action := range []string{"restart", "delete"} {
+		res := b.post("/vm/bobs-vm/"+action, url.Values{"csrf": {token}, "confirm": {"bobs-vm"}}, fromPanel)
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("%s bobs-vm: %d", action, res.StatusCode)
+		}
+	}
+	if !pt.exists("bobs-vm") || pt.c.host.ran("systemctl stop") {
+		t.Errorf("alice touched bobs-vm: %v", pt.c.host.cmds)
+	}
+
+	admin := pt.browser("admin")
+	_, page = admin.page("/vm/bobs-vm")
+	token = csrf(t, page)
+	if res := admin.post("/vm/bobs-vm/restart", url.Values{"csrf": {token}}, fromPanel); res.StatusCode != http.StatusSeeOther {
+		t.Errorf("admin restart: %d", res.StatusCode)
+	}
+	res := admin.post("/vm/bobs-vm/delete", url.Values{"csrf": {token}, "confirm": {"bobs-vm"}}, fromPanel)
+	if res.StatusCode != 200 || pt.exists("bobs-vm") {
+		t.Errorf("admin delete: %d", res.StatusCode)
+	}
+}
+
+// The style and the script are cached by browsers, so their address changes
+// with them: a new boxed is never shown with the old ones.
+func TestPanelStaticFilesChangeAddress(t *testing.T) {
+	pt := newPanelTest(t)
+	b := pt.browser("member")
+	_, page := b.page("/")
+	for _, file := range []string{"panel.css", "panel.js"} {
+		m := regexp.MustCompile(`"(/static/` + regexp.QuoteMeta(file) + `\?v=[0-9a-f]{8,})"`).FindStringSubmatch(page)
+		if m == nil {
+			t.Errorf("no versioned %s in:\n%s", file, page)
+			continue
+		}
+		if res := b.do("https://boxe.example"+m[1], nil); res.StatusCode != 200 {
+			t.Errorf("%s: %d", m[1], res.StatusCode)
+		}
 	}
 }

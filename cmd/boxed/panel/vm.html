@@ -29,5 +29,21 @@
   <p>Port 8000 of the VM is <a href="{{.VM.URL}}" target="_blank" rel="noopener">{{.VM.URL}}</a>, open to the team after login.
   Ports 3000 to 9999 are <code>https://{{.VM.Name}}--3000.{{.Domain}}</code> and so on.</p>
   <p>To show a port to someone outside the team: <code>ssh {{.SSH}} share {{.VM.Name}}</code>.</p>
+  {{if .Manage}}
+  <h2>Manage</h2>
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  <form class="manage" method="post" action="/vm/{{.VM.Name}}/restart">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <p><b>Restart</b> Shuts the VM down and boots it again, for when it is stuck.</p>
+    <button>Restart</button>
+  </form>
+  <form class="manage" method="post" action="/vm/{{.VM.Name}}/delete">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <p><b>Delete</b> Deletes the VM and its disk, for good.</p>
+    <label>Type <code>{{.VM.Name}}</code> to confirm
+      <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
+    <button class="danger">Delete {{.VM.Name}}</button>
+  </form>
+  {{end}}
 </div>
 {{end}}

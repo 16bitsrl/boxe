@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"embed"
+	"encoding/base64"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -14,9 +17,10 @@ import (
 )
 
 // The panel on https://<domain>: each member's VMs, all of them for an
-// admin, read only. Pages are server-rendered; panel.js only adds the copy
-// buttons. VM pages are on the same site and untrusted, hence the headers in
-// panelHeaders and no state change on a GET.
+// admin, which they can restart and delete. Pages are server-rendered;
+// panel.js only adds the copy buttons. VM pages are on the same site and
+// untrusted, hence the headers in panelHeaders, no state change on a GET, and
+// the origin check and the session's token on every form (act).
 
 //go:embed panel
 var panelFiles embed.FS
@@ -36,6 +40,16 @@ var panelPages = func() map[string]*template.Template {
 				return "-"
 			}
 			return t.Local().Format("2006-01-02 15:04")
+		},
+		// static is the address of a file in panel/static, which changes
+		// with the file: browsers keep them for an hour.
+		"static": func(name string) string {
+			b, err := panelFiles.ReadFile("panel/static/" + name)
+			if err != nil {
+				panic(err)
+			}
+			h := sha256.Sum256(b)
+			return fmt.Sprintf("/static/%s?v=%x", name, h[:5])
 		},
 	}
 	layout := template.Must(template.New("").Funcs(funcs).ParseFS(panelFiles, "panel/layout.html"))
@@ -59,6 +73,14 @@ func (b *Box) panel(w *Web) {
 		return list, err
 	}
 	w.keysOf = b.keys.AuthorizedKeys
+	w.restart = func(user string, admin bool, name string) error {
+		_, err := b.restart(user, admin, name)
+		return err
+	}
+	w.remove = func(user string, admin bool, name string) error {
+		_, err := b.remove(user, admin, name)
+		return err
+	}
 	w.sshName = b.name
 }
 
@@ -74,6 +96,9 @@ type panelPage struct {
 	VMs     []vmJSON
 	VM      vmJSON
 	Links   []panelLink // of VM
+	Manage  bool        // they may restart and delete VM
+	CSRF    string      // the token of the session, for forms
+	Error   string      // what went wrong with the last form
 	Keys    []string
 	Message string
 	Logout  bool      // the message offers to log out
@@ -127,6 +152,10 @@ func (w *Web) servePanel(rw http.ResponseWriter, r *http.Request) {
 		panelStatic.ServeHTTP(rw, r)
 		return
 	}
+	if name, action, ok := panelAction(r.URL.Path); ok && r.Method == http.MethodPost {
+		w.act(rw, r, name, action)
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		rw.Header().Set("Allow", "GET, HEAD")
 		w.message(rw, http.StatusMethodNotAllowed, "Not allowed", "This page can only be read.")
@@ -137,8 +166,7 @@ func (w *Web) servePanel(rw http.ResponseWriter, r *http.Request) {
 		http.Redirect(rw, r, "/__boxe/login?"+url.Values{"r": {"https://" + w.cfg.Domain + r.URL.RequestURI()}}.Encode(), http.StatusFound)
 		return
 	}
-	p := panelPage{Email: s.E}
-	p.User, p.Admin = w.memberOf(s.E)
+	p := w.page(s)
 	switch path := r.URL.Path; {
 	case path == "/":
 		w.vmList(rw, p)
@@ -186,25 +214,100 @@ func (w *Web) vmList(rw http.ResponseWriter, p panelPage) {
 	w.render(rw, http.StatusOK, "vms", p)
 }
 
-func (w *Web) vmDetail(rw http.ResponseWriter, p panelPage, name string) {
+// page is a page of the panel for the session s.
+func (w *Web) page(s claims) panelPage {
+	p := panelPage{Email: s.E, CSRF: w.csrfToken(s)}
+	p.User, p.Admin = w.memberOf(s.E)
+	return p
+}
+
+// csrfToken is what the panel's forms carry: bound to the session (the
+// email and the login at the IdP), unknown to VM pages, which can send
+// forms here with the member's cookie but cannot read the panel.
+func (w *Web) csrfToken(s claims) string {
+	return base64.RawURLEncoding.EncodeToString(w.mac(fmt.Sprintf("csrf\x00%s\x00%d", s.E, s.A)))
+}
+
+// find is the VM name among those p's member may see.
+func (w *Web) find(rw http.ResponseWriter, p panelPage, name string) (vmJSON, bool) {
 	vms, err := w.visible(p)
 	if err != nil {
 		log.Printf("web: panel: %v", err)
 		w.message(rw, http.StatusInternalServerError, "Error", "The VM could not be read, try again.")
-		return
+		return vmJSON{}, false
 	}
 	for _, v := range vms {
-		if v.Name != name {
-			continue
+		if v.Name == name {
+			return v, true
 		}
-		p.Title, p.Nav, p.VM = v.Name, "vms", v
-		host := func(label string) string { return "https://" + label + "." + w.cfg.Domain }
-		p.Links = []panelLink{{"Web", host(v.Name)}}
-		if v.Owner == p.User {
-			p.Links = append(p.Links, panelLink{"Agent", host(v.Name + "--agent")}, panelLink{"Desktop", host(v.Name + "--desktop")})
-		}
-		w.render(rw, http.StatusOK, "vm", p)
-		return
 	}
 	w.notFound(rw, p)
+	return vmJSON{}, false
+}
+
+func (w *Web) vmDetail(rw http.ResponseWriter, p panelPage, name string) {
+	if v, ok := w.find(rw, p, name); ok {
+		w.vmPage(rw, http.StatusOK, p, v)
+	}
+}
+
+func (w *Web) vmPage(rw http.ResponseWriter, status int, p panelPage, v vmJSON) {
+	p.Title, p.Nav, p.VM = v.Name, "vms", v
+	host := func(label string) string { return "https://" + label + "." + w.cfg.Domain }
+	p.Links = []panelLink{{"Web", host(v.Name)}}
+	if v.Owner == p.User {
+		p.Links = append(p.Links, panelLink{"Agent", host(v.Name + "--agent")}, panelLink{"Desktop", host(v.Name + "--desktop")})
+	}
+	p.Manage = v.Owner == p.User || p.Admin
+	w.render(rw, status, "vm", p)
+}
+
+// panelAction splits /vm/<name>/<action>, for the actions of the panel.
+func panelAction(path string) (name, action string, ok bool) {
+	rest, ok := strings.CutPrefix(path, "/vm/")
+	name, action, _ = strings.Cut(rest, "/")
+	return name, action, ok && (action == "restart" || action == "delete")
+}
+
+// act runs a form of the panel: only from the panel itself, in the session
+// it was made for, on a VM the member may manage.
+func (w *Web) act(rw http.ResponseWriter, r *http.Request, name, action string) {
+	s, ok := w.session(r, w.cfg.Domain)
+	var p panelPage
+	if ok {
+		p = w.page(s)
+	}
+	if err := http.NewCrossOriginProtection().Check(r); err != nil {
+		p.Title, p.Message = "Not allowed", "VMs can only be changed from this panel."
+		w.render(rw, http.StatusForbidden, "message", p)
+		return
+	}
+	if !ok || !hmac.Equal([]byte(r.PostFormValue("csrf")), []byte(p.CSRF)) {
+		p.Title, p.Message = "Page expired", "Open the page again and retry."
+		w.render(rw, http.StatusForbidden, "message", p)
+		return
+	}
+	// Whoever sees a VM may manage it; restart and remove check it again.
+	v, ok := w.find(rw, p, name)
+	if !ok {
+		return
+	}
+	if action == "delete" && r.PostFormValue("confirm") != v.Name {
+		p.Error = "Type " + v.Name + " to delete it."
+		w.vmPage(rw, http.StatusBadRequest, p, v)
+		return
+	}
+	do := map[string]func(string, bool, string) error{"restart": w.restart, "delete": w.remove}[action]
+	if err := do(p.User, p.Admin, v.Name); err != nil {
+		p.Error = err.Error() + "."
+		w.vmPage(rw, http.StatusInternalServerError, p, v)
+		return
+	}
+	log.Printf("web: %s (%s): %s %s", s.E, p.User, action, v.Name)
+	if action == "delete" {
+		p.Title, p.Message = "Deleted", v.Name+" is deleted."
+		w.render(rw, http.StatusOK, "message", p)
+		return
+	}
+	http.Redirect(rw, r, "/vm/"+v.Name, http.StatusSeeOther)
 }

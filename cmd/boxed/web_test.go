@@ -140,8 +140,12 @@ func (b *browser) do(rawURL string, header http.Header) *http.Response {
 }
 
 func (b *browser) send(method, rawURL string, header http.Header) *http.Response {
+	return b.sendBody(method, rawURL, header, "")
+}
+
+func (b *browser) sendBody(method, rawURL string, header http.Header, body string) *http.Response {
 	u, _ := url.Parse(rawURL)
-	r := httptest.NewRequest(method, u.RequestURI(), nil)
+	r := httptest.NewRequest(method, u.RequestURI(), strings.NewReader(body))
 	r.Host = u.Host
 	for k, v := range header {
 		r.Header[k] = v

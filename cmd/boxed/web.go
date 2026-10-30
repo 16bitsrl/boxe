@@ -46,6 +46,8 @@ type Web struct {
 	vms      func(owner string) ([]vmJSON, error) // "": every VM
 	keysOf   func(user string) string             // authorized_keys lines
 	sshName  string                               // what members ssh to
+	// restart and remove a VM of user, any VM for an admin.
+	restart, remove func(user string, admin bool, name string) error
 
 	mu  sync.Mutex
 	idp struct{ Auth, Token, Userinfo string } // from discovery, on first use

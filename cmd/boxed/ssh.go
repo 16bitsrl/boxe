@@ -698,29 +698,51 @@ func (b *Box) cmdRestart(o output, user string, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: ssh %s restart <name>", b.name)
 	}
-	b.mu.Lock()
-	v, err := b.owned(user, args[0])
-	if err == nil && b.hv.Sleeping(v.Name) {
-		if err = b.makeRoom(v); err != nil {
-			b.mu.Unlock()
-			return err
-		}
-	}
-	if err == nil {
-		if err = b.hv.Stop(v); err == nil {
-			err = b.hv.Start(v)
-		}
-	}
-	b.mu.Unlock()
+	v, err := b.restart(user, false, args[0])
 	if err != nil {
-		log.Printf("%s: restart %s: %v", user, args[0], err)
-		return fmt.Errorf("could not restart %s", args[0])
+		return err
 	}
 	if err := b.hv.WaitSSH(v, 30*time.Second); err != nil {
 		return err
 	}
 	o.print(done{v.Name, "restarted"}, v.Name+" restarted\n")
 	return nil
+}
+
+// manageable is the VM name if user may restart or delete it: theirs, or
+// anyone's for an admin.
+func (b *Box) manageable(user string, admin bool, name string) (VM, error) {
+	v, err := b.owned(user, name)
+	if err != nil && admin {
+		if v, err := b.store.Get(name); err == nil {
+			return v, nil
+		}
+	}
+	return v, err
+}
+
+// restart stops and starts the VM name of user (any VM for an admin).
+func (b *Box) restart(user string, admin bool, name string) (VM, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	v, err := b.manageable(user, admin, name)
+	if err != nil {
+		return v, err
+	}
+	if b.hv.Sleeping(v.Name) {
+		if err := b.makeRoom(v); err != nil {
+			return v, err
+		}
+	}
+	if err = b.hv.Stop(v); err == nil {
+		err = b.hv.Start(v)
+	}
+	if err != nil {
+		log.Printf("%s: restart %s: %v", user, v.Name, err)
+		return v, fmt.Errorf("could not restart %s", v.Name)
+	}
+	log.Printf("%s: restarted %s", user, v.Name)
+	return v, nil
 }
 
 func (b *Box) cmdTTL(o output, user string, args []string) error {
@@ -804,22 +826,28 @@ func (b *Box) cmdRm(o output, user string, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: ssh %s rm <name>", b.name)
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	v, err := b.owned(user, args[0])
+	v, err := b.remove(user, false, args[0])
 	if err != nil {
-		return err
-	}
-	if err := b.hv.Destroy(v); err != nil {
-		log.Printf("%s: rm %s: %v", user, v.Name, err)
-		return fmt.Errorf("could not delete the VM")
-	}
-	log.Printf("%s: removed %s", user, v.Name)
-	if err := b.store.Delete(v.Name); err != nil {
 		return err
 	}
 	o.print(done{v.Name, "deleted"}, v.Name+" deleted\n")
 	return nil
+}
+
+// remove deletes the VM name of user (any VM for an admin) and its disk.
+func (b *Box) remove(user string, admin bool, name string) (VM, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	v, err := b.manageable(user, admin, name)
+	if err != nil {
+		return v, err
+	}
+	if err := b.hv.Destroy(v); err != nil {
+		log.Printf("%s: rm %s: %v", user, v.Name, err)
+		return v, fmt.Errorf("could not delete the VM")
+	}
+	log.Printf("%s: removed %s", user, v.Name)
+	return v, b.store.Delete(v.Name)
 }
 
 // done is the --json answer of commands that change a VM.

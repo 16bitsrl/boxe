@@ -1,5 +1,8 @@
 # GitHub usernames of the team, one per line: their keys come from
 # https://github.com/<user>.keys. Copy to /etc/boxe/users.
 # After the username, the member's email at the identity provider: only then
-# can they use the agent of their VMs on the web (https://<vm>--agent...).
-octocat octocat@example.com
+# can they use the agent of their VMs on the web (https://<vm>--agent...) and
+# see them in the panel. "admin" after the email: the panel shows them every
+# VM, and lets them restart or delete any.
+octocat octocat@example.com admin
+hubot hubot@example.com
