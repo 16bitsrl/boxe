@@ -405,8 +405,9 @@ type vmJSON struct {
 	ReadySeconds float64 `json:"ready_seconds,omitempty"`
 	Expires      string  `json:"expires,omitempty"` // when it is deleted by itself (--ttl)
 	KeepAwake    bool    `json:"keep_awake,omitempty"`
-	Egress       string  `json:"egress"`          // all, or integrations: it reaches nothing else
-	Agent        string  `json:"agent,omitempty"` // the conversation --agent started
+	Egress       string  `json:"egress"`             // all, or integrations: it reaches nothing else
+	WakesAt      string  `json:"wakes_at,omitempty"` // asleep: when it wakes up for a job scheduled in it
+	Agent        string  `json:"agent,omitempty"`    // the conversation --agent started
 	// What it uses, in ls: CPU over the last minute (100: one core), the
 	// RAM it takes on the host and the space its disk takes, in bytes.
 	CPUPercent float64 `json:"cpu_percent,omitempty"`
@@ -423,6 +424,9 @@ func (b *Box) vmJSON(v VM) vmJSON {
 	j.Expires = timeCol(v.Expires)
 	j.KeepAwake = v.KeepAwake
 	j.Egress = v.Egress
+	if j.State == "sleeping" && !v.NextJob.IsZero() {
+		j.WakesAt = timeCol(v.NextJob.Add(-wakeLead))
+	}
 	return j
 }
 
@@ -1000,11 +1004,15 @@ func (b *Box) cmdLs(o output, user string, args []string) error {
 		if image == "" {
 			image = "-"
 		}
+		state := j.State
+		if j.WakesAt != "" {
+			state += " (wakes " + wakeTime(vms[i].NextJob.Add(-wakeLead), now) + ")"
+		}
 		cpu := "-"
 		if j.CPUPercent > 0 {
 			cpu = fmt.Sprintf("%.0f%%", j.CPUPercent)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", j.Name, j.IP, j.CPUs, j.Mem, j.State,
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", j.Name, j.IP, j.CPUs, j.Mem, state,
 			cpu, size(j.MemUsed), size(j.DiskUsed), j.Owner,
 			vms[i].Created.Local().Format("2006-01-02 15:04"), expiresIn(vms[i].Expires, now), image, j.Egress)
 	}

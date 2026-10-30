@@ -154,3 +154,38 @@ func TestVMHostname(t *testing.T) {
 		}
 	}
 }
+
+// Where VMs sleep, the VM tells its user (the welcome message reads
+// etc/boxe/sleeps) and its coding agents that scheduled jobs still run, and
+// what keep-awake is for.
+func TestConfigSaysVMsSleep(t *testing.T) {
+	ca, _ := loadHostKey(filepath.Join(t.TempDir(), "ca"))
+	h := &Hypervisor{HostCA: ca, SSHSuffix: "boxe"}
+	files := func() map[string]string {
+		data, err := h.configArchive(VM{Name: "quick-fox", Index: 2}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := map[string]string{}
+		tr := tar.NewReader(bytes.NewReader(data))
+		for hdr, err := tr.Next(); err == nil; hdr, err = tr.Next() {
+			b, _ := io.ReadAll(tr)
+			m[hdr.Name] = string(b)
+		}
+		return m
+	}
+	f := files()
+	if _, ok := f["etc/boxe/sleeps"]; ok || strings.Contains(f["home/exedev/.config/boxe/AGENTS.md"], "sleep") {
+		t.Error("VMs never sleep here, yet the VM says they do")
+	}
+	h.SleepDir = "/boxe/sleep"
+	f = files()
+	if _, ok := f["etc/boxe/sleeps"]; !ok {
+		t.Error("no etc/boxe/sleeps")
+	}
+	for _, want := range []string{"sleep", "Cron jobs", "systemd timers", "keep-awake quick-fox on"} {
+		if !strings.Contains(f["home/exedev/.config/boxe/AGENTS.md"], want) {
+			t.Errorf("AGENTS.md lacks %q", want)
+		}
+	}
+}

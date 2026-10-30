@@ -181,6 +181,9 @@ func main() {
 	}
 	go b.ReapLoop(time.Minute)
 	go b.SleepLoop(time.Minute)
+	if *sleepDir != "" {
+		go b.WakeLoop(15 * time.Second)
+	}
 
 	if webDomain != "" {
 		if *org == "" && *emailDoms == "" {

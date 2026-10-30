@@ -240,6 +240,7 @@ type activity struct {
 	cpu     int64     // CPU time and traffic at the last check
 	traffic int64
 	at      time.Time
+	job     time.Time // woken up for the job due then, unused since
 }
 
 // busy counts a connection to the VM opening (+1) or closing (-1).
@@ -249,6 +250,7 @@ func (b *Box) busy(name string, delta int) {
 	a := b.activityOf(name, time.Now())
 	a.conns += delta
 	a.last = time.Now()
+	a.job = time.Time{} // in use: no longer just up for a job
 }
 
 func (b *Box) activityOf(name string, now time.Time) *activity {
@@ -263,11 +265,28 @@ func (b *Box) activityOf(name string, now time.Time) *activity {
 	return a
 }
 
+// idle tells whether a VM used as a says can go to sleep: nobody has used
+// it for sleepAfter or, woken up for a job, it has been idle for jobIdle
+// since the job's time. Called with b.actMu held.
+func (b *Box) idle(a *activity, now time.Time) bool {
+	if a == nil || a.conns > 0 {
+		return false
+	}
+	if !a.job.IsZero() {
+		since := a.last
+		if a.job.After(since) {
+			since = a.job
+		}
+		return now.Sub(since) >= jobIdle
+	}
+	return b.sleepAfter > 0 && now.Sub(a.last) >= b.sleepAfter
+}
+
 // sleepIdle puts to sleep the VMs nobody has used for sleepAfter: no SSH or
 // web connection, little CPU, little traffic. Runs every minute or so; its
 // readings also give the CPU use in ls, so it runs even if VMs never sleep.
 func (b *Box) sleepIdle(now time.Time) {
-	sleeps := b.sleepAfter > 0 && b.hv.SleepDir != ""
+	sleeps := b.hv.SleepDir != ""
 	vms, err := b.store.List("")
 	if err != nil {
 		log.Printf("sleep: %v", err)
@@ -292,7 +311,7 @@ func (b *Box) sleepIdle(now time.Time) {
 			a.last = now // a VM kept awake is unused from when that ends
 		}
 		a.cpu, a.traffic, a.at = cpu, traffic, now
-		idle := sleeps && now.Sub(a.last) >= b.sleepAfter
+		idle := sleeps && b.idle(a, now)
 		b.actMu.Unlock()
 		if idle {
 			b.sleepIfIdle(v, now)
@@ -301,26 +320,52 @@ func (b *Box) sleepIdle(now time.Time) {
 }
 
 // sleepIfIdle puts v to sleep unless it was used meanwhile, or went to
-// sleep already: a wake may have made room with it.
+// sleep already: a wake may have made room with it. A VM with a job due
+// soon stays awake for it.
 func (b *Box) sleepIfIdle(v VM, now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.actMu.Lock()
 	a := b.act[v.Name]
-	idle := a != nil && a.conns == 0 && now.Sub(a.last) >= b.sleepAfter
+	idle, job := b.idle(a, now), a != nil && !a.job.IsZero()
 	b.actMu.Unlock()
 	cur, err := b.store.Get(v.Name)
 	if !idle || err != nil || cur.Index != v.Index || cur.KeepAwake || b.hv.State(v.Name) != "running" {
 		return
 	}
-	if err := b.hv.Sleep(cur); err != nil {
+	schedule := b.schedule(cur)
+	if next, _ := nextJob(schedule, now); !next.IsZero() && next.Sub(now) < minNap {
+		return
+	}
+	if err := b.sleep(cur, schedule, now); err != nil {
 		log.Printf("%s: sleep %s: %v", cur.Owner, cur.Name, err)
 		return
 	}
-	log.Printf("%s: %s went to sleep, unused for %s", cur.Owner, cur.Name, b.sleepAfter)
+	if job {
+		log.Printf("%s: %s went back to sleep after its job", cur.Owner, cur.Name)
+	} else {
+		log.Printf("%s: %s went to sleep, unused for %s", cur.Owner, cur.Name, b.sleepAfter)
+	}
+}
+
+// sleep puts v to sleep and records when the next job of schedule (what
+// boxe-agent said is scheduled in v) runs: WakeLoop wakes v up for it.
+// Called with b.mu held.
+func (b *Box) sleep(v VM, schedule string, now time.Time) error {
+	if err := b.hv.Sleep(v); err != nil {
+		return err
+	}
 	b.actMu.Lock()
 	delete(b.act, v.Name)
 	b.actMu.Unlock()
+	next, what := nextJob(schedule, now)
+	if err := b.store.SetNextJob(v.Name, next, schedule); err != nil {
+		log.Printf("%s: sleep %s: %v", v.Owner, v.Name, err)
+	}
+	if !next.IsZero() {
+		log.Printf("%s: %s wakes up at %s for %s", v.Owner, v.Name, next.Add(-wakeLead).Local().Format(time.DateTime), what)
+	}
+	return nil
 }
 
 // SleepLoop records what VMs use and puts idle ones to sleep, every so
@@ -426,14 +471,11 @@ func (b *Box) makeRoom(v VM) error {
 		if b.hv.State(o.Name) != "running" {
 			continue
 		}
-		if err := b.hv.Sleep(o); err != nil {
+		if err := b.sleep(o, b.schedule(o), time.Now()); err != nil {
 			log.Printf("%s: sleep %s: %v", o.Owner, o.Name, err)
 			continue
 		}
 		log.Printf("%s: %s went to sleep to make room for %s", o.Owner, o.Name, v.Name)
-		b.actMu.Lock()
-		delete(b.act, o.Name)
-		b.actMu.Unlock()
 		m, _ := memMiB(o.Mem)
 		awake -= m
 	}
@@ -454,12 +496,18 @@ func (b *Box) cmdSleep(o output, user string, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := b.hv.Sleep(v); err != nil {
+	now := time.Now()
+	if err := b.sleep(v, b.schedule(v), now); err != nil {
 		log.Printf("%s: sleep %s: %v", user, v.Name, err)
 		return hostErrorf("could not put %s to sleep: %v", v.Name, err)
 	}
 	log.Printf("%s: put %s to sleep", user, v.Name)
-	o.print(done{v.Name, "sleeping"}, v.Name+" is asleep: it wakes up when you connect to it\n")
+	text := v.Name + " is asleep: it wakes up when you connect to it\n"
+	if cur, err := b.store.Get(v.Name); err == nil && !cur.NextJob.IsZero() {
+		text = fmt.Sprintf("%s is asleep: it wakes up when you connect to it, and at %s for the next job scheduled in it\n",
+			v.Name, wakeTime(cur.NextJob.Add(-wakeLead), now))
+	}
+	o.print(done{v.Name, "sleeping"}, text)
 	return nil
 }
 

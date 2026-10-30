@@ -316,11 +316,12 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 	if host != v.Name {
 		names = host + " " + v.Name
 	}
-	files := []struct {
+	type file struct {
 		path, data string
 		mode       int64
 		user       bool
-	}{
+	}
+	files := []file{
 		{"etc/hostname", host + "\n", 0o644, false},
 		{"etc/hosts", fmt.Sprintf("127.0.0.1 localhost\n127.0.1.1 %s\n::1 localhost ip6-localhost ip6-loopback\n", names), 0o644, false},
 		{"etc/resolv.conf", "nameserver " + gatewayIP + "\n", 0o644, false},
@@ -339,11 +340,7 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 		host, _, _ := net.SplitHostPort(strings.TrimPrefix(g, "http://"))
 		// From the configuration, not the image: new VMs of every image,
 		// and copies of older VMs, get them. VMs made before do not.
-		files = append(files[:len(files)-1], []struct {
-			path, data string
-			mode       int64
-			user       bool
-		}{
+		files = append(files[:len(files)-1], []file{
 			{"etc/profile.d/boxe-llm.sh", "# The API keys of the user's boxe account (ssh boxe llm): the host adds them\n" +
 				"# to the requests that go through its gateway.\n" +
 				"eval \"$(curl -sf --noproxy " + host + " --connect-timeout 1 --max-time 2 " + g + "/env 2>/dev/null)\"\n", 0o644, false},
@@ -353,6 +350,10 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 				" serve -systemd-activation -require-header X-Box-Email\n", 0o644, false},
 			files[len(files)-1], // the id stays last
 		}...)
+	}
+	if h.SleepDir != "" {
+		// The welcome message tells users the VM sleeps (image/boxe-welcome.sh).
+		files = append(files[:len(files)-1], file{"etc/boxe/sleeps", "", 0o644, false}, files[len(files)-1])
 	}
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -407,13 +408,17 @@ func (h *Hypervisor) agentsMD(v VM) string {
 	if h.LLMGateway != "" {
 		llm = fmt.Sprintf("- Models: the API keys of the user's boxe account are added by the host to requests through its gateway. Login shells get `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY` and `OPENAI_BASE_URL`/`OPENAI_API_KEY` for the providers with a key (the key is a placeholder; the host puts the real one in); Shelley uses the gateway too. If they are missing, the user adds a key from their computer with `ssh boxe llm set anthropic` (or `openai`); `ssh boxe llm usage` shows what was used. The gateway is %s.", h.LLMGateway)
 	}
+	sleep := ""
+	if h.SleepDir != "" {
+		sleep = fmt.Sprintf("- When nobody uses it for a while, the VM goes to sleep: its memory is saved and everything in it pauses. The next SSH connection or web request wakes it up where it was, in about a second. Cron jobs and systemd timers keep working: the VM wakes up shortly before each one and goes back to sleep after. A server that must answer without that delay, or a program that must keep running (a bot, a queue worker), needs `ssh boxe keep-awake %s on`, run from the user's computer.\n", v.Name)
+	}
 	return fmt.Sprintf("You are running in a boxe VM named %[1]s: a microVM on the team's own infrastructure. It is similar to exe.dev, but `ssh exe.dev` is not available here.\n\n"+
 		"- Ubuntu, user `exedev` with passwordless sudo, persistent disk. Docker works.\n"+
 		"- Internet works, unless your user restricted this VM to its integrations (`ssh boxe egress`, from their computer): then nothing else answers and only integration names resolve. The team's LAN, the host and the other VMs are not reachable from here.\n"+
 		"- Integrations: your user keeps API secrets on the host and attaches them to this VM (`ssh boxe integrations`, from their computer). Call one at http://<integration>.int.%[3]s/<path>, plain HTTP (e.g. `curl http://stripe.int.%[3]s/v1/customers`): the host adds the credentials on the way out, so you never see the keys; do not ask for them nor send your own. An integration not attached to this VM answers 403.\n"+
 		"- GitHub, if your user attached it: `git clone http://github.int.%[3]s/OWNER/REPO` (fetch and push too, unless it is read-only) and the API at http://github.int.%[3]s/api/ (e.g. `curl http://github.int.%[3]s/api/user`).\n"+
-		"%[4]s\n%[2]s\n"+
-		"- VMs are created, copied and deleted from the user's computer with `ssh boxe` (`ssh boxe help`), not from inside the VM.\n", v.Name, web, h.SSHSuffix, llm)
+		"%[4]s\n%[2]s\n%[5]s"+
+		"- VMs are created, copied and deleted from the user's computer with `ssh boxe` (`ssh boxe help`), not from inside the VM.\n", v.Name, web, h.SSHSuffix, llm, sleep)
 }
 
 // newHostKey makes the VM's SSH host key and its certificate, signed by

@@ -23,6 +23,8 @@ type VM struct {
 	Expires   time.Time // when it is deleted by itself (--ttl); zero: never
 	KeepAwake bool      // never goes to sleep when unused
 	Egress    string    // egressAll, or egressIntegrations: it reaches nothing but the gateway
+	NextJob   time.Time // asleep: when its next scheduled job runs (schedule.go); zero: none
+	Schedule  string    // what boxe-agent said was scheduled in it when it went to sleep
 }
 
 func (v VM) IP() string  { return fmt.Sprintf("10.42.%d.%d", v.Index>>8, v.Index&255) }
@@ -145,6 +147,8 @@ CREATE TABLE IF NOT EXISTS tokens (
 	db.Exec("ALTER TABLE vms ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE vms ADD COLUMN keep_awake INTEGER NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE vms ADD COLUMN egress TEXT NOT NULL DEFAULT 'all'")
+	db.Exec("ALTER TABLE vms ADD COLUMN next_job TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE vms ADD COLUMN schedule TEXT NOT NULL DEFAULT ''")
 	if _, err := db.Exec("ALTER TABLE user_keys ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''"); err == nil {
 		db.Exec("UPDATE user_keys SET updated_at = ?", time.Now().UTC().Format(time.RFC3339))
 	}
@@ -153,17 +157,18 @@ CREATE TABLE IF NOT EXISTS tokens (
 
 func scanVM(row interface{ Scan(...any) error }) (VM, error) {
 	var v VM
-	var created, expires string
-	err := row.Scan(&v.Name, &v.Owner, &v.Index, &v.CPUs, &v.Mem, &created, &v.Image, &expires, &v.KeepAwake, &v.Egress)
+	var created, expires, next string
+	err := row.Scan(&v.Name, &v.Owner, &v.Index, &v.CPUs, &v.Mem, &created, &v.Image, &expires, &v.KeepAwake, &v.Egress, &next, &v.Schedule)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, errNotFound
 	}
 	v.Created, _ = time.Parse(time.RFC3339, created)
 	v.Expires, _ = time.Parse(time.RFC3339, expires)
+	v.NextJob, _ = time.Parse(time.RFC3339, next)
 	return v, err
 }
 
-const vmCols = "name, owner, idx, cpus, mem, created_at, image, expires_at, keep_awake, egress"
+const vmCols = "name, owner, idx, cpus, mem, created_at, image, expires_at, keep_awake, egress, next_job, schedule"
 
 func (s *Store) Get(name string) (VM, error) {
 	return scanVM(s.db.QueryRow("SELECT "+vmCols+" FROM vms WHERE name = ?", name))
@@ -204,8 +209,9 @@ func (s *Store) Insert(v *VM) error {
 	if v.Egress == "" {
 		v.Egress = egressAll
 	}
-	_, err = s.db.Exec("INSERT INTO vms ("+vmCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		v.Name, v.Owner, v.Index, v.CPUs, v.Mem, v.Created.Format(time.RFC3339), v.Image, timeCol(v.Expires), v.KeepAwake, v.Egress)
+	_, err = s.db.Exec("INSERT INTO vms ("+vmCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		v.Name, v.Owner, v.Index, v.CPUs, v.Mem, v.Created.Format(time.RFC3339), v.Image, timeCol(v.Expires), v.KeepAwake, v.Egress,
+		timeCol(v.NextJob), v.Schedule)
 	return err
 }
 
@@ -228,6 +234,13 @@ func (s *Store) SetEgress(name, egress string) error {
 // GetByIndex is the VM with that index, the one at its IP address.
 func (s *Store) GetByIndex(idx int) (VM, error) {
 	return scanVM(s.db.QueryRow("SELECT "+vmCols+" FROM vms WHERE idx = ?", idx))
+}
+
+// SetNextJob records, as the VM goes to sleep, when its next job runs (zero:
+// none) and what is scheduled in it, to find the one after.
+func (s *Store) SetNextJob(name string, t time.Time, schedule string) error {
+	_, err := s.db.Exec("UPDATE vms SET next_job = ?, schedule = ? WHERE name = ?", timeCol(t), schedule, name)
+	return err
 }
 
 // timeCol is how times are stored: RFC 3339 in UTC, empty for the zero time.
