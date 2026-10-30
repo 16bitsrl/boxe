@@ -91,7 +91,9 @@ before you trust it with anything.
   them for an admin) with their links and usage, and shows your account: the
   SSH keys boxe lets in, how to set up SSH, and logging out everywhere. The
   owner of a VM, and an admin, can restart it or delete it there (typing its
-  name); everything else is done over SSH.
+  name); everything else is done over SSH. Admins also get a page about the
+  host: what `/healthz` would complain about, CPU, RAM and disk, the team
+  with their keys and VMs, and the last backup run.
 
 ## Commands
 

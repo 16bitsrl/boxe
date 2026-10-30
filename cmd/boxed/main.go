@@ -128,7 +128,8 @@ func main() {
 		webDomain = ""
 	}
 	b := &Box{store: store, keys: keys, limits: limits, name: name, sleepAfter: *sleepAfter,
-		backupConf: "/etc/boxe/backup.conf", backupLast: *stateDir + "/backup-last", hv: &Hypervisor{
+		backupConf: "/etc/boxe/backup.conf", backupLast: *stateDir + "/backup-last",
+		backupStatus: *stateDir + "/backup-status.json", hv: &Hypervisor{
 			VMUser: *vmUser, VMUserID: uid, VMGroupID: gid, MinFree: *minFree << 30,
 			BaseSnapshot: *base, Dataset: *dataset, Kernel: *kernel,
 			HostPubKey: string(vmKey), HostKeyPath: strings.TrimSuffix(*hostKey, ".pub"),

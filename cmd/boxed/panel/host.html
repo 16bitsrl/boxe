@@ -1,0 +1,57 @@
+{{define "content"}}
+{{with .Host}}
+<h1>Host</h1>
+<div class="card{{if .Problems}} note{{end}}">
+  {{if .Problems}}<p><b>Needs attention:</b></p>
+  <ul class="problems">{{range .Problems}}<li>{{.}}</li>{{end}}</ul>
+  {{else}}<p>Everything is fine.</p>{{end}}
+</div>
+<div class="card spaced">
+  <div class="cols">
+    <dl class="facts">
+      <dt>CPU</dt><dd>{{.CPUs}} cores{{if .Load}}, load {{.Load}}{{end}}</dd>
+      <dt>RAM</dt><dd>{{size .MemTotal}}, {{size .MemFree}} available</dd>
+      <dt>Awake VMs</dt><dd>{{size .MemVMs}} of RAM</dd>
+      <dt>VM disks</dt><dd>{{size .DiskFree}} free</dd>
+    </dl>
+    <dl class="facts">
+      <dt>boxed</dt><dd>{{.Version}}</dd>
+    </dl>
+  </div>
+</div>
+
+<h2>Team</h2>
+<div class="card">
+<table class="vms">
+  <thead><tr><th>GitHub</th><th>Email</th><th>Role</th><th class="num">Keys</th><th class="num">VMs</th><th class="num">Awake RAM</th></tr></thead>
+  <tbody>
+  {{range .Members}}
+  <tr>
+    <td class="owner">{{.User}}</td>
+    <td>{{if .Email}}{{.Email}}{{else}}<span class="muted">none: no panel, agent or desktop</span>{{end}}</td>
+    <td>{{if .Admin}}admin{{else}}member{{end}}</td>
+    <td class="num" data-label="Keys">{{.Keys}}</td>
+    <td class="num" data-label="VMs">{{.VMs}}</td>
+    <td class="num" data-label="Awake RAM">{{.MemAwake}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+<p class="hint">The team is the users file on the host; keys come from GitHub every 10 minutes.</p>
+
+<h2>Backups</h2>
+<div class="card">
+  {{if not .Backups}}<p>Backups are off: there is no backup configuration on the host.</p>
+  {{else}}
+  <dl class="facts">
+    <dt>Last complete</dt><dd>{{if .Last}}{{when .Last}}{{else}}never{{end}}</dd>
+    {{with .Run}}
+    <dt>Last run</dt><dd>{{when .Started}}{{if .End}}, took {{.Took}}{{else}}, not finished{{end}}</dd>
+    {{if .Failed}}<dt>Not saved</dt><dd>{{range $i, $vm := .Failed}}{{if $i}}, {{end}}<a href="/vm/{{$vm}}">{{$vm}}</a>{{end}}</dd>{{end}}
+    {{end}}
+  </dl>
+  {{end}}
+</div>
+{{end}}
+{{end}}

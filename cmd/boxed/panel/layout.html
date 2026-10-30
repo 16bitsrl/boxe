@@ -15,6 +15,7 @@
   <a class="logo" href="/"><img src="/static/logo.svg" alt="boxe" width="107" height="28"></a>
   {{if .Email}}<nav>
     <a href="/"{{if eq .Nav "vms"}} aria-current="page"{{end}}>VMs</a>
+    {{if .Admin}}<a href="/host"{{if eq .Nav "host"}} aria-current="page"{{end}}>Host</a>{{end}}
     <a href="/me"{{if eq .Nav "me"}} aria-current="page"{{end}}>Account</a>
     <form method="post" action="/logout"><button class="link">Log out</button></form>
   </nav>{{end}}

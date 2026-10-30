@@ -14,6 +14,11 @@ DATASET=${BOXE_DATASET:-boxe/vms}
 TMP=${DATASET%/*}/backup-tmp
 KEEP=${BOXE_BACKUP_KEEP:---keep-daily 7 --keep-weekly 4 --keep-monthly 3}
 TAG=backup-$(date -u +%Y%m%dT%H%M%SZ)
+# The last run, for the panel: no "end" while it runs, or if it died.
+STATUS=/var/lib/boxe/backup-status.json
+start=$(date -u +%s)
+status() { printf '%s\n' "$1" > $STATUS.tmp && mv $STATUS.tmp $STATUS; }
+status "{\"start\":$start}"
 work=$(mktemp -d)
 cleanup() {
 	rm -rf "$work"
@@ -29,7 +34,7 @@ restic backup --host boxe --tag state /etc/boxe "$work/boxe.db" \
 	/var/lib/boxe --exclude '/var/lib/boxe/boxe.db*' --exclude /var/lib/boxe/kernels
 
 zfs create -o mountpoint=none "$TMP"
-failed=0
+failed=()
 # Disks set aside by boxe-restore.sh are not VMs.
 for ds in $(zfs list -H -o name -d 1 "$DATASET" | tail -n +2 | grep -v -- '-before-restore$'); do
 	vm=${ds##*/}
@@ -39,13 +44,16 @@ for ds in $(zfs list -H -o name -d 1 "$DATASET" | tail -n +2 | grep -v -- '-befo
 	if ! restic backup --host boxe --tag vm --tag "vm:$vm" --stdin-filename "$vm.img" \
 		--stdin-from-command -- cat "/dev/zvol/$TMP/$vm"; then
 		echo "backup of $vm failed" >&2
-		failed=1
+		failed+=("$vm")
 	fi
 	zfs destroy "$TMP/$vm"
 	zfs destroy "$ds@$TAG"
 done
 
 restic forget --host boxe --group-by host,tags --prune $KEEP
+list=
+for vm in "${failed[@]}"; do list+="${list:+,}\"$vm\""; done
+status "{\"start\":$start,\"end\":$(date -u +%s),\"failed\":[$list]}"
 # Only a complete backup counts: a VM left out shows on /healthz.
-[ $failed = 0 ] && date -u +%s > /var/lib/boxe/backup-last
-exit $failed
+[ ${#failed[@]} = 0 ] && date -u +%s > /var/lib/boxe/backup-last
+[ ${#failed[@]} = 0 ]

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"net/url"
 	"regexp"
 	"strings"
@@ -401,6 +404,41 @@ func TestPanelStaticFilesChangeAddress(t *testing.T) {
 		}
 		if res := b.do("https://boxe.example"+m[1], nil); res.StatusCode != 200 {
 			t.Errorf("%s: %d", m[1], res.StatusCode)
+		}
+	}
+}
+
+// The admin's page about the host: what is wrong, the team and the backups.
+// Members do not see it.
+func TestPanelHost(t *testing.T) {
+	pt := newPanelTest(t)
+	b := pt.c.box
+	dir := t.TempDir()
+	b.backupConf, b.backupLast, b.backupStatus = filepath.Join(dir, "backup.conf"), filepath.Join(dir, "backup-last"), filepath.Join(dir, "backup-status.json")
+	os.WriteFile(b.backupConf, nil, 0o600)
+	start := time.Now().Add(-3 * time.Hour)
+	os.WriteFile(b.backupLast, []byte(fmt.Sprint(start.Add(-40*time.Hour).Unix())), 0o644)
+	os.WriteFile(b.backupStatus, []byte(fmt.Sprintf(`{"start":%d,"end":%d,"failed":["nap"]}`, start.Unix(), start.Add(25*time.Minute).Unix())), 0o644)
+	b.keys.mu.Lock()
+	b.keys.users = []string{"alice", "bob", "mattia", "carol"}
+	b.keys.mu.Unlock()
+
+	member := pt.browser("member")
+	if code, page := member.page("/host"); code != 404 || strings.Contains(page, `href="/host"`) {
+		t.Errorf("a member: %d\n%s", code, page)
+	}
+	code, page := pt.browser("admin").page("/host")
+	if code != 200 {
+		t.Fatalf("%d:\n%s", code, page)
+	}
+	for _, want := range []string{
+		`href="/host" aria-current="page"`,
+		"backup older than 36h", // what /healthz says
+		"alice@example.com", "carol", "admin",
+		"25m", ">nap<", start.Local().Format("2006-01-02 15:04"),
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("no %q in:\n%s", want, page)
 		}
 	}
 }

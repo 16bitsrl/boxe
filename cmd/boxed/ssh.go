@@ -36,7 +36,8 @@ type Box struct {
 	limits Limits
 	name   string // what users ssh to, e.g. boxe
 
-	backupConf, backupLast string // backups are on if backupConf exists; backupLast: when the last one ended
+	backupConf, backupLast string // backups are on if backupConf exists; backupLast: when the last complete one ended
+	backupStatus           string // the last run, as boxe-backup.sh writes it
 
 	connsMu sync.Mutex
 	conns   map[ssh.Context]net.Conn // open SSH connections, to drop revoked users

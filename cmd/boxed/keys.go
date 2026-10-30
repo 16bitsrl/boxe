@@ -21,6 +21,7 @@ type Keys struct {
 	store     *Store
 
 	mu     sync.RWMutex
+	users  []string          // as in usersFile
 	byKey  map[string]string // marshalled public key -> user
 	byUser map[string]string // user -> authorized_keys lines
 	emails map[string]string // user -> email at the IdP, if given
@@ -74,6 +75,24 @@ func (k *Keys) Member(email string) (user string, admin bool) {
 	return "", false
 }
 
+// teamMember is a line of the users file, with how many keys the member has.
+type teamMember struct {
+	User, Email string
+	Admin       bool
+	Keys        int
+}
+
+// Members are the team, in the order of the users file.
+func (k *Keys) Members() []teamMember {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	var m []teamMember
+	for _, u := range k.users {
+		m = append(m, teamMember{u, k.emails[u], k.admins[u], strings.Count(k.byUser[u], "\n")})
+	}
+	return m
+}
+
 func (k *Keys) Refresh() {
 	users, emails, admins, err := readUsers(k.usersFile)
 	if err != nil {
@@ -106,7 +125,7 @@ func (k *Keys) Refresh() {
 	}
 	k.set(byKey, byUser)
 	k.mu.Lock()
-	k.emails, k.admins = emails, admins
+	k.users, k.emails, k.admins = users, emails, admins
 	k.mu.Unlock()
 	if allOK {
 		k.mu.Lock()

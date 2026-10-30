@@ -111,6 +111,10 @@ table.vms { width: 100%; border-collapse: collapse; }
 button.danger { background: var(--red); border-color: var(--red); color: #fff; }
 button.danger:hover { background: #9c271f; }
 .error { color: var(--red); font-weight: 600; margin: 0 0 10px; }
+.spaced { margin-top: 16px; }
+.card > .facts:first-child, .card > .cols:first-child > .facts { margin-top: 0; }
+.muted { color: var(--muted); }
+.problems { margin: 6px 0 0; padding-left: 20px; }
 .keys { list-style: none; padding: 0; margin: 10px 0 0; }
 .keys li { padding: 6px 0; border-top: 1px solid var(--rule); overflow-wrap: anywhere; }
 

@@ -54,7 +54,7 @@ var panelPages = func() map[string]*template.Template {
 	}
 	layout := template.Must(template.New("").Funcs(funcs).ParseFS(panelFiles, "panel/layout.html"))
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"vms", "vm", "me", "message"} {
+	for _, name := range []string{"vms", "vm", "me", "host", "message"} {
 		pages[name] = template.Must(template.Must(layout.Clone()).ParseFS(panelFiles, "panel/"+name+".html"))
 	}
 	return pages
@@ -77,6 +77,7 @@ func (b *Box) panel(w *Web) {
 		_, err := b.restart(user, admin, name)
 		return err
 	}
+	w.host = b.hostInfo
 	w.remove = func(user string, admin bool, name string) error {
 		_, err := b.remove(user, admin, name)
 		return err
@@ -87,7 +88,7 @@ func (b *Box) panel(w *Web) {
 // panelPage is what a page of the panel shows.
 type panelPage struct {
 	Title   string
-	Nav     string // the current section: vms or me
+	Nav     string // the current section: vms, host or me
 	Email   string // who is logged in; "" on pages without a session
 	User    string // their GitHub user; "" if not linked
 	Admin   bool
@@ -99,6 +100,7 @@ type panelPage struct {
 	Manage  bool        // they may restart and delete VM
 	CSRF    string      // the token of the session, for forms
 	Error   string      // what went wrong with the last form
+	Host    hostInfo    // for an admin
 	Keys    []string
 	Message string
 	Logout  bool      // the message offers to log out
@@ -176,6 +178,9 @@ func (w *Web) servePanel(rw http.ResponseWriter, r *http.Request) {
 			p.Keys = strings.Split(strings.TrimSpace(w.keysOf(p.User)), "\n")
 		}
 		w.render(rw, http.StatusOK, "me", p)
+	case path == "/host" && p.Admin:
+		p.Title, p.Nav, p.Host = "Host", "host", w.host()
+		w.render(rw, http.StatusOK, "host", p)
 	case strings.HasPrefix(path, "/vm/"):
 		w.vmDetail(rw, p, strings.TrimPrefix(path, "/vm/"))
 	default:
