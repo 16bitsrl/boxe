@@ -441,4 +441,13 @@ func TestPanelHost(t *testing.T) {
 			t.Errorf("no %q in:\n%s", want, page)
 		}
 	}
+
+	// With every VM asleep, no dash for the RAM they take.
+	for _, vm := range []string{"alice test", "alice nap", "bob bobs-vm", "mattia mine"} {
+		user, name, _ := strings.Cut(vm, " ")
+		pt.c.must(user, "sleep "+name)
+	}
+	if _, page := pt.browser("admin").page("/host"); !strings.Contains(page, "<dd>none</dd>") {
+		t.Errorf("no VM awake:\n%s", page)
+	}
 }

@@ -11,7 +11,7 @@
     <dl class="facts">
       <dt>CPU</dt><dd>{{.CPUs}} cores{{if .Load}}, load {{.Load}}{{end}}</dd>
       <dt>RAM</dt><dd>{{size .MemTotal}}, {{size .MemFree}} available</dd>
-      <dt>Awake VMs</dt><dd>{{size .MemVMs}} of RAM</dd>
+      <dt>Awake VMs</dt><dd>{{if .MemVMs}}{{size .MemVMs}} of RAM{{else}}none{{end}}</dd>
       <dt>VM disks</dt><dd>{{size .DiskFree}} free</dd>
     </dl>
     <dl class="facts">

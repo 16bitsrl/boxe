@@ -97,9 +97,9 @@ table.vms { width: 100%; border-collapse: collapse; }
 .detail .title h1 { margin: 0; font-family: var(--mono); font-stretch: normal; font-size: 30px; font-weight: 700; letter-spacing: 0; }
 .links { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 6px; }
 .cols { display: grid; grid-template-columns: 3fr 2fr; gap: 0 40px; }
-.facts { display: grid; grid-template-columns: max-content 1fr; align-content: start; gap: 6px 18px; margin: 16px 0 0; }
+.facts { display: grid; grid-template-columns: max-content 1fr; align-content: start; align-items: baseline; gap: 6px 18px; margin: 16px 0 0; }
 .facts dt { color: var(--muted); font-size: 14px; }
-.facts dd { margin: 0; font: 14px var(--mono); overflow-wrap: anywhere; }
+.facts dd { margin: 0; font: 14px/1.5 var(--mono); overflow-wrap: anywhere; }
 .detail h2 { border-top: 1px solid var(--rule); padding-top: 18px; margin-top: 22px; }
 .manage { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; padding: 12px 0; border-top: 1px solid var(--rule); }
 .manage:first-of-type { border-top: 0; padding-top: 0; }
