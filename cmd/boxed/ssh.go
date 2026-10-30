@@ -654,7 +654,16 @@ func (b *Box) create(o output, user, name string, cpus int, mem string, srcName,
 		text += fmt.Sprintf("  Deleted by itself %s (ssh %s ttl %s off to keep it)\n", expiresIn(v.Expires, time.Now()), b.name, name)
 	}
 	if agent != "" {
+		// Under the lock, so that v cannot be deleted and its name and
+		// address go to someone else's VM while the prompt is on its way.
+		b.mu.Lock()
+		cur, err := b.store.Get(name)
+		if err != nil || !cur.same(v) {
+			b.mu.Unlock()
+			return fmt.Errorf("%s was deleted before its agent could start", name)
+		}
 		slug, err := b.hv.StartAgent(v, agent)
+		b.mu.Unlock()
 		if err != nil {
 			log.Printf("%s: agent in %s: %v", user, name, err)
 			return fmt.Errorf("%s is ready, but %v", name, err)

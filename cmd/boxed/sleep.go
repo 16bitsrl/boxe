@@ -76,20 +76,34 @@ func (h *Hypervisor) Sleep(v VM) error {
 	return nil
 }
 
-// Wake restores a sleeping VM. Once it runs its snapshot is deleted: the
-// disk moves on from there, so that memory must never come back. If the
-// restore fails, the VM stays asleep.
+// Wake restores a sleeping VM. It is restored paused, and its snapshot is
+// deleted before it runs on: from then on the disk moves on from that
+// memory, which must never come back. If the restore fails, the VM stays
+// asleep; if resuming fails, it is off and boots afresh on restart.
 func (h *Hypervisor) Wake(v VM) error {
 	if !h.Sleeping(v.Name) {
 		return nil
+	}
+	// Paused by a boxed that stopped halfway: it never ran, start over.
+	if h.Running(v.Name) {
+		h.run("systemctl", "stop", unit(v.Name))
 	}
 	if err := h.start(v, true); err != nil {
 		h.run("systemctl", "stop", unit(v.Name))
 		return err
 	}
 	for end := time.Now().Add(30 * time.Second); time.Now().Before(end); time.Sleep(50 * time.Millisecond) {
-		if out, err := h.chRemote(v.Name, "info"); err == nil && strings.Contains(string(out), `"Running"`) {
-			return h.forgetSleep(v.Name)
+		if out, err := h.chRemote(v.Name, "info"); err == nil && strings.Contains(string(out), `"Paused"`) {
+			err := h.forgetSleep(v.Name)
+			if err == nil {
+				_, err = h.chRemote(v.Name, "resume")
+			}
+			if err != nil {
+				h.run("systemctl", "stop", unit(v.Name))
+				h.run("systemctl", "reset-failed", unit(v.Name))
+				return fmt.Errorf("%s did not resume after the restore: %v", v.Name, err)
+			}
+			return nil
 		}
 		if !h.Running(v.Name) {
 			return fmt.Errorf("%s could not be restored (journalctl -u %s on the host)", v.Name, unit(v.Name))
@@ -281,20 +295,22 @@ func (b *Box) sleepIdle(now time.Time) {
 		idle := sleeps && now.Sub(a.last) >= b.sleepAfter
 		b.actMu.Unlock()
 		if idle {
-			b.sleepIfIdle(v)
+			b.sleepIfIdle(v, now)
 		}
 	}
 }
 
-// sleepIfIdle puts v to sleep unless someone connected meanwhile.
-func (b *Box) sleepIfIdle(v VM) {
+// sleepIfIdle puts v to sleep unless it was used meanwhile, or went to
+// sleep already: a wake may have made room with it.
+func (b *Box) sleepIfIdle(v VM, now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.actMu.Lock()
-	conns := b.act[v.Name].conns
+	a := b.act[v.Name]
+	idle := a != nil && a.conns == 0 && now.Sub(a.last) >= b.sleepAfter
 	b.actMu.Unlock()
 	cur, err := b.store.Get(v.Name)
-	if conns > 0 || err != nil || cur.Index != v.Index || cur.KeepAwake {
+	if !idle || err != nil || cur.Index != v.Index || cur.KeepAwake || b.hv.State(v.Name) != "running" {
 		return
 	}
 	if err := b.hv.Sleep(cur); err != nil {

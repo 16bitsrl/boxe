@@ -77,7 +77,7 @@ func TestWakeRestores(t *testing.T) {
 			run = c
 		}
 	}
-	for _, want := range []string{"--restore source_url=file://" + h.sleepDir("test") + ",memory_restore_mode=copyonwrite,resume=true",
+	for _, want := range []string{"--restore source_url=file://" + h.sleepDir("test") + ",memory_restore_mode=copyonwrite,resume=false",
 		"-p User=", "-p NoNewPrivileges=yes"} {
 		if !strings.Contains(run, want) && !(want == "-p User=" && h.VMUser == "") {
 			t.Errorf("systemd-run lacks %q:\n%s", want, run)
@@ -271,5 +271,69 @@ func TestQuotaCountsAwakeVMs(t *testing.T) {
 	c.must("alice", "wake c1")
 	if state("b1") != "sleeping" || state("c1") != "running" || state("d1") != "running" {
 		t.Errorf("b1 %s, c1 %s, d1 %s", state("b1"), state("c1"), state("d1"))
+	}
+}
+
+// The idle loop picks a VM, then waits for the lock; meanwhile a wake can
+// put that VM to sleep to make room, or someone can use it and leave.
+func TestIdleSleepRechecksUnderTheLock(t *testing.T) {
+	c := newCLI(t, "alice")
+	b := c.box
+	b.sleepAfter = 30 * time.Minute
+	c.must("alice", "new gone")
+	c.must("alice", "new used")
+	vms, _ := b.store.List("alice")
+	// gone: already asleep, its activity forgotten.
+	c.must("alice", "sleep gone")
+	b.actMu.Lock()
+	delete(b.act, "gone")
+	b.actMu.Unlock()
+	// used: someone connected and left after the loop looked at it.
+	b.busy("used", 1)
+	b.busy("used", -1)
+
+	for _, v := range vms {
+		b.sleepIfIdle(v, time.Now().Add(time.Minute))
+	}
+	if s := b.hv.State("used"); s != "running" {
+		t.Errorf("used: %s, want running", s)
+	}
+}
+
+// The VM is restored paused and its snapshot deleted before it runs on: once
+// it runs, its disk moves on from that memory, which must never come back.
+// Even if boxed loses sight of it right after.
+func TestWakeNeverRestoresTheSameMemoryTwice(t *testing.T) {
+	h, f := newFakeHypervisor(t)
+	v := runningVM(t, h, "test")
+	if err := h.Sleep(v); err != nil {
+		t.Fatal(err)
+	}
+	f.fail["ch-remote --api-socket "+sock("test")+" resume"] = true
+	if err := h.Wake(v); err == nil {
+		t.Fatal("no error")
+	}
+	if h.Sleeping("test") {
+		t.Error("the snapshot outlived a restore that may have run")
+	}
+	if s := h.State("test"); s == "running" {
+		t.Errorf("state %q: a VM restored but not resumed was left behind", s)
+	}
+}
+
+// A boxed that stopped between restore and resume leaves the VM paused, its
+// snapshot unused: the next wake starts over.
+func TestWakeAfterAnInterruptedWake(t *testing.T) {
+	h, f := newFakeHypervisor(t)
+	v := runningVM(t, h, "test")
+	if err := h.Sleep(v); err != nil {
+		t.Fatal(err)
+	}
+	f.running[unit("test")], f.paused[unit("test")] = true, true
+	if err := h.Wake(v); err != nil {
+		t.Fatal(err)
+	}
+	if h.Sleeping("test") || h.State("test") != "running" || f.paused[unit("test")] {
+		t.Errorf("state %q, sleeping %v, paused %v", h.State("test"), h.Sleeping("test"), f.paused[unit("test")])
 	}
 }

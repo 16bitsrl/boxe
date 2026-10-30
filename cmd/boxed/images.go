@@ -149,14 +149,19 @@ func (b *Box) pruneImages() {
 		if err != nil || strings.TrimSpace(string(out)) != "-" {
 			continue // a disk still comes from it, or we cannot tell
 		}
-		// Without -r: anything else under the image (a snapshot an admin
-		// took) makes this fail, and the image stays.
+		// Only an image with nothing else on it (a snapshot an admin took):
+		// one without its @base would no longer be listed, nor cleaned up.
+		ds := strings.TrimSuffix(snap, "@base")
+		out, err = h.exec(30*time.Second, "zfs", "list", "-H", "-o", "name", "-t", "all", "-r", ds)
+		if err != nil || strings.Join(strings.Fields(string(out)), " ") != ds+" "+snap {
+			continue
+		}
 		if err := h.run("zfs", "destroy", snap); err != nil {
 			log.Printf("images: %s: %v", v, err)
 			continue
 		}
-		if err := h.run("zfs", "destroy", strings.TrimSuffix(snap, "@base")); err != nil {
-			log.Printf("images: %s: %v", v, err)
+		if err := h.run("zfs", "destroy", ds); err != nil {
+			log.Printf("images: %s: %v; its @base is gone, delete %s by hand", v, err, ds)
 			continue
 		}
 		log.Printf("images: removed %s, no VM uses it and a newer %s exists", v, name)

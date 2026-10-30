@@ -107,3 +107,21 @@ func TestOldImagesGoWithTheirLastVM(t *testing.T) {
 		t.Errorf("images still lists the deleted version:\n%s", out)
 	}
 }
+
+// An old image with anything else on it, such as a snapshot an admin took,
+// is left whole: deleting its @base alone would hide it from images and
+// from every later cleanup, its space still taken.
+func TestOldImageWithMoreOnItStays(t *testing.T) {
+	c := newCLI(t, "alice")
+	c.box.hv.BaseSnapshot = "boxe/images/boxeuntu-20261030@base"
+	c.host.images = []string{
+		"boxe/images/boxeuntu-20261030@base",
+		"boxe/images/laravel-20261030@base",
+		"boxe/images/laravel-20261030@before-maintenance",
+		"boxe/images/laravel-20261031@base",
+	}
+	c.box.pruneImages()
+	if c.host.ran("zfs destroy boxe/images/laravel-20261030") {
+		t.Errorf("destroyed part of an image with an admin's snapshot on it: %v", c.host.cmds)
+	}
+}

@@ -172,11 +172,20 @@ func (h *Hypervisor) flush(v VM) error {
 	return err
 }
 
-// inVM runs cmd in v as exedev, over SSH with the host's own key.
+// inVM runs cmd in v as exedev, over SSH with the host's own key. Only if
+// the VM at v's address shows a certificate for v's name: another VM that
+// took the address meanwhile is not sent cmd.
 func (h *Hypervisor) inVM(v VM, timeout time.Duration, cmd string) ([]byte, error) {
+	known := filepath.Join(h.StateDir, "vm_known_hosts")
+	line := "@cert-authority *." + h.SSHSuffix + " " + string(gossh.MarshalAuthorizedKey(h.HostCA.PublicKey()))
+	if b, err := os.ReadFile(known); err != nil || string(b) != line {
+		if err := os.WriteFile(known, []byte(line), 0o644); err != nil {
+			return nil, err
+		}
+	}
 	return h.exec(timeout, "ssh", "-i", h.HostKeyPath, "-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
-		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
-		"exedev@"+v.IP(), cmd)
+		"-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile="+known, "-o", "HostKeyAlias="+v.Name+"."+h.SSHSuffix,
+		"-o", "LogLevel=ERROR", "exedev@"+v.IP(), cmd)
 }
 
 // StartAgent starts a Shelley conversation in v on prompt and returns its
@@ -477,7 +486,7 @@ func (h *Hypervisor) start(v VM, restore bool) error {
 			return err
 		}
 		args = append(args, "/usr/local/bin/cloud-hypervisor", "--api-socket", sock(v.Name),
-			"--restore", "source_url=file://"+h.sleepDir(v.Name)+",memory_restore_mode=copyonwrite,resume=true")
+			"--restore", "source_url=file://"+h.sleepDir(v.Name)+",memory_restore_mode=copyonwrite,resume=false")
 		return h.run("systemd-run", args...)
 	}
 	cmdline := fmt.Sprintf("console=ttyS0 root=/dev/vda rw init=/usr/local/bin/boxe-init ip=%s::10.42.0.1:255.255.0.0:%s:eth0:off quiet", v.IP(), v.Name)

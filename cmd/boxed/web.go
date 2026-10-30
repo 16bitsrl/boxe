@@ -165,14 +165,18 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A member is themself; a visitor with a share link is nobody.
+	// A visitor reaches only the VM their link is for, not one that took
+	// its name since.
 	email := ""
+	var v VM
+	var err error
 	if s, ok := w.session(r, host); ok {
 		email = s.E
-	} else if !w.shared(r, host, name, port) {
+		v, err = w.store.Get(name)
+	} else if v, ok = w.shared(r, host, name, port); !ok {
 		http.Redirect(rw, r, "https://"+w.cfg.Domain+"/__boxe/login?"+url.Values{"r": {"https://" + host + r.URL.RequestURI()}}.Encode(), http.StatusFound)
 		return
 	}
-	v, err := w.store.Get(name)
 	if err != nil {
 		http.Error(rw, "There is no VM named "+name+".", http.StatusNotFound)
 		return
@@ -222,20 +226,22 @@ func (w *Web) openShare(rw http.ResponseWriter, r *http.Request, host, name stri
 	http.Redirect(rw, r, "/", http.StatusFound)
 }
 
-// shared says whether the request comes with a share link, still valid,
-// for this host.
-func (w *Web) shared(r *http.Request, host, name string, port int) bool {
+// shared returns the VM the request's share link is for, if the link is
+// still valid and for this host.
+func (w *Web) shared(r *http.Request, host, name string, port int) (VM, bool) {
 	c, err := r.Cookie(shareCookie)
 	if err != nil {
-		return false
+		return VM{}, false
 	}
 	s, ok := w.verify(c.Value, "share")
 	if !ok || s.H != host {
-		return false
+		return VM{}, false
 	}
-	vm, idx, p, ok := w.store.Shared(s.T)
+	// The VM first: deleting one ends its links before it goes, so a link
+	// still valid after this lookup is for this VM.
 	v, err := w.store.Get(name)
-	return ok && err == nil && vm == name && idx == v.Index && p == port
+	vm, idx, p, ok := w.store.Shared(s.T)
+	return v, ok && err == nil && vm == name && idx == v.Index && p == port
 }
 
 // vmHost returns the VM and its port for a host like <vm>.<domain> (port
@@ -451,7 +457,7 @@ func (w *Web) proxy(v VM, port int, email string) http.Handler {
 				defer w.vmLock.RUnlock()
 			}
 			cur, err := w.store.Get(v.Name)
-			if err != nil || cur.Index != v.Index || !cur.Created.Equal(v.Created) {
+			if err != nil || !cur.same(v) {
 				return nil, fmt.Errorf("%s is gone", v.Name)
 			}
 			d := net.Dialer{Timeout: 3 * time.Second}

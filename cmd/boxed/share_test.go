@@ -109,3 +109,28 @@ func TestWebShareLink(t *testing.T) {
 		t.Errorf("after unshare: %d, want the login", res.StatusCode)
 	}
 }
+
+// A visitor's link was for one VM: if it is deleted while the request is on
+// its way, and someone else makes a VM with the same name, which gets the
+// same address, the visitor does not reach it.
+func TestShareLinkDoesNotReachAReplacedVM(t *testing.T) {
+	wt := newWebTest(t)
+	v, _ := wt.web.store.Get("test")
+	token, _ := wt.web.store.Share(v, vmWebPort)
+	b := wt.browser("outsider")
+	b.get("https://test.boxe.example/__boxe/share/"+token, nil)
+	store := wt.web.store
+	wt.web.wake = func(name string) error {
+		store.Delete("test")
+		store.Insert(&VM{Name: "test", Owner: "bob", CPUs: 1, Mem: "1G"})
+		return nil
+	}
+	wt.seen = nil
+	res := b.do("https://test.boxe.example/", nil)
+	if wt.seen != nil {
+		t.Fatal("the visitor reached bob's VM")
+	}
+	if res.StatusCode != http.StatusBadGateway && res.StatusCode != http.StatusNotFound {
+		t.Errorf("status %d, want 502 or 404", res.StatusCode)
+	}
+}

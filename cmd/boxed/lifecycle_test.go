@@ -24,6 +24,7 @@ type fakeHost struct {
 	fail      map[string]bool  // command prefix -> fails
 	running   map[string]bool  // unit -> active
 	failed    map[string]bool  // unit -> failed
+	paused    map[string]bool  // unit -> hypervisor restored, VM not resumed yet
 	cpu       map[string]int64 // unit -> CPU time used, in ns
 	devDir    string
 	agent     []string          // commands boxe-agent got, as "<vm> <command>"
@@ -36,6 +37,7 @@ type fakeHost struct {
 	images    []string          // snapshots under the images dataset
 	mem       map[string]int64  // unit -> RAM it takes, in bytes
 	disk      string            // zfs list of the VM disks: name, referenced
+	onSSH     func()            // runs once, when something next waits for a VM's sshd
 }
 
 // dial connects to a VM: every sshd answers at once, and boxe-agent behind
@@ -43,6 +45,13 @@ type fakeHost struct {
 func (f *fakeHost) dial(network, addr string, _ time.Duration) (net.Conn, error) {
 	c, s := net.Pipe()
 	if network != "unix" {
+		f.mu.Lock()
+		hook := f.onSSH
+		f.onSSH = nil
+		f.mu.Unlock()
+		if hook != nil {
+			hook()
+		}
 		go s.Write([]byte("SSH-2.0-fake\r\n"))
 		return c, nil
 	}
@@ -100,7 +109,11 @@ func (f *fakeHost) exec(_ time.Duration, name string, args ...string) ([]byte, e
 	case strings.HasPrefix(cmd, "systemd-run"):
 		for i, a := range args {
 			if a == "--unit" {
+				if f.running[args[i+1]] {
+					return []byte("Unit " + args[i+1] + ".service was already loaded"), errors.New("exit status 1")
+				}
 				f.running[args[i+1]] = true
+				f.paused[args[i+1]] = strings.Contains(cmd, "resume=false")
 			}
 		}
 	case strings.HasPrefix(cmd, "zfs clone"):
@@ -108,6 +121,15 @@ func (f *fakeHost) exec(_ time.Duration, name string, args ...string) ([]byte, e
 		f.origin[ds] = args[len(args)-2]
 		os.MkdirAll(filepath.Dir(filepath.Join(f.devDir, ds)), 0o755)
 		os.WriteFile(filepath.Join(f.devDir, ds), nil, 0o600)
+	case strings.HasPrefix(cmd, "zfs list -H -o name -t all -r"):
+		ds := args[len(args)-1]
+		all := []string{ds}
+		for _, snap := range f.images {
+			if strings.HasPrefix(snap, ds+"@") || strings.HasPrefix(snap, ds+"/") {
+				all = append(all, snap)
+			}
+		}
+		return []byte(strings.Join(all, "\n") + "\n"), nil
 	case strings.HasPrefix(cmd, "zfs list -H -o name"):
 		if _, err := os.Stat(filepath.Join(f.devDir, args[len(args)-1])); err != nil {
 			return []byte("dataset does not exist"), errors.New("exit status 1")
@@ -177,7 +199,12 @@ func (f *fakeHost) exec(_ time.Duration, name string, args ...string) ([]byte, e
 		case "shutdown-vmm":
 			delete(f.running, u)
 		case "info":
+			if f.paused[u] {
+				return []byte(`{"state":"Paused"}`), nil
+			}
 			return []byte(`{"state":"Running"}`), nil
+		case "resume":
+			delete(f.paused, u)
 		}
 	}
 	return nil, nil
@@ -200,10 +227,10 @@ func newFakeHypervisor(t *testing.T) (*Hypervisor, *fakeHost) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fakeHost{fail: map[string]bool{}, running: map[string]bool{}, failed: map[string]bool{}, cpu: map[string]int64{},
+	f := &fakeHost{fail: map[string]bool{}, running: map[string]bool{}, failed: map[string]bool{}, paused: map[string]bool{}, cpu: map[string]int64{},
 		agentErr: map[string]string{}, hangUp: map[string]int{}, origin: map[string]string{}, devDir: t.TempDir()}
 	h := &Hypervisor{BaseSnapshot: "boxe/images/base@base", Dataset: "boxe/vms", Kernel: "vmlinux",
-		ConfigDir: t.TempDir(), SleepDir: t.TempDir(), HostCA: ca, DevDir: f.devDir, Exec: f.exec, Dial: f.dial}
+		ConfigDir: t.TempDir(), SleepDir: t.TempDir(), StateDir: t.TempDir(), HostCA: ca, DevDir: f.devDir, Exec: f.exec, Dial: f.dial}
 	return h, f
 }
 

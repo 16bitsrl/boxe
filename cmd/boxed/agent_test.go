@@ -103,3 +103,39 @@ func TestWebAgentIsTheOwners(t *testing.T) {
 		}
 	}
 }
+
+// The prompt goes to the VM it was given for, never to one that took its
+// place while it booted: same name and address, but someone else's.
+func TestAgentNotSentToAReplacedVM(t *testing.T) {
+	c := newCLI(t, "alice", "bob")
+	c.host.onSSH = func() {
+		c.must("alice", "rm test")
+		c.must("bob", "new test")
+	}
+	if _, errOut, ok := c.run("alice", "new test --agent read the secrets"); ok || !strings.Contains(errOut, "deleted") {
+		t.Errorf("alice: %q", errOut)
+	}
+	for _, cmd := range c.host.cmds {
+		if strings.Contains(cmd, "shelley client chat") {
+			t.Errorf("the prompt reached bob's VM: %s", cmd)
+		}
+	}
+}
+
+// The host's own SSH into a VM (agent, sync) checks the VM's certificate
+// for its name: an address now used by another VM is refused.
+func TestHostSSHChecksTheVM(t *testing.T) {
+	c := newCLI(t, "alice")
+	c.must("alice", "new test --agent hi")
+	var chat string
+	for _, cmd := range c.host.cmds {
+		if strings.Contains(cmd, "shelley client chat") {
+			chat = cmd
+		}
+	}
+	for _, want := range []string{"StrictHostKeyChecking=yes", "HostKeyAlias=test.boxe", "UserKnownHostsFile=/"} {
+		if !strings.Contains(chat, want) {
+			t.Errorf("ssh lacks %s: %s", want, chat)
+		}
+	}
+}

@@ -25,6 +25,12 @@ type VM struct {
 func (v VM) IP() string  { return fmt.Sprintf("10.42.%d.%d", v.Index>>8, v.Index&255) }
 func (v VM) MAC() string { return fmt.Sprintf("02:42:0a:2a:%02x:%02x", v.Index>>8, v.Index&255) }
 
+// same tells whether o is still v: a VM deleted meanwhile may have passed
+// its name and address to someone else's.
+func (v VM) same(o VM) bool {
+	return v.Owner == o.Owner && v.Index == o.Index && v.Created.Equal(o.Created)
+}
+
 var errNotFound = errors.New("not found")
 
 type Store struct{ db *sql.DB }
@@ -116,7 +122,7 @@ func (s *Store) Insert(v *VM) error {
 	if err != nil {
 		return err
 	}
-	v.Created = time.Now().UTC()
+	v.Created = time.Now().UTC().Truncate(time.Second) // as stored
 	_, err = s.db.Exec("INSERT INTO vms ("+vmCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		v.Name, v.Owner, v.Index, v.CPUs, v.Mem, v.Created.Format(time.RFC3339), v.Image, timeCol(v.Expires), v.KeepAwake)
 	return err
