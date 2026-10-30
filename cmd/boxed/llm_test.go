@@ -451,16 +451,16 @@ func TestGatewayCredentialHeaders(t *testing.T) {
 	c.setKey("alice", "openai", "sk-oai-alice")
 	g := c.box.llm
 
-	fromVM(g, "10.42.0.2", "POST", "/openai/responses", `{}`, map[string]string{"Authorization": "Bearer sk-oai-own", "X-Api-Key": "boxe"})
+	llmRequest(g, "10.42.0.2", "POST", "/openai/responses", `{}`, map[string]string{"Authorization": "Bearer sk-oai-own", "X-Api-Key": "boxe"})
 	if r, _ := openai.last(); r.Header.Get("Authorization") != "Bearer sk-oai-own" {
 		t.Errorf("own OpenAI key replaced: %q", r.Header.Get("Authorization"))
 	}
-	fromVM(g, "10.42.0.2", "POST", "/openai/responses", `{}`, map[string]string{"Authorization": "Bearer boxe", "X-Api-Key": "something-else"})
+	llmRequest(g, "10.42.0.2", "POST", "/openai/responses", `{}`, map[string]string{"Authorization": "Bearer boxe", "X-Api-Key": "something-else"})
 	if r, _ := openai.last(); r.Header.Get("Authorization") != "Bearer sk-oai-alice" {
 		t.Errorf("OpenAI placeholder kept: %q", r.Header.Get("Authorization"))
 	}
 	// Claude Code with a subscription sends its token as a bearer.
-	fromVM(g, "10.42.0.2", "POST", "/anthropic/v1/messages", `{}`, map[string]string{"Authorization": "Bearer sk-ant-oat-own", "X-Api-Key": "boxe"})
+	llmRequest(g, "10.42.0.2", "POST", "/anthropic/v1/messages", `{}`, map[string]string{"Authorization": "Bearer sk-ant-oat-own", "X-Api-Key": "boxe"})
 	if r, _ := anthropic.last(); r.Header.Get("Authorization") != "Bearer sk-ant-oat-own" || r.Header.Get("X-Api-Key") != "" {
 		t.Errorf("subscription token replaced: %v", r.Header)
 	}
@@ -474,9 +474,9 @@ func TestGatewayCountsOnce(t *testing.T) {
 	c.setKey("alice", "openai", "sk-oai-alice")
 	g := c.box.llm
 	openai.answer = `{"id":"resp_1","model":"gpt-5","usage":{"input_tokens":2000,"output_tokens":100,"input_tokens_details":{"cached_tokens":0}}}`
-	fromVM(g, "10.42.0.2", "POST", "/openai/responses", `{"model":"gpt-5"}`, nil)
-	fromVM(g, "10.42.0.2", "GET", "/openai/responses/resp_1", "", nil)
-	fromVM(g, "10.42.0.2", "GET", "/openai/responses/resp_1", "", nil)
+	llmRequest(g, "10.42.0.2", "POST", "/openai/responses", `{"model":"gpt-5"}`, nil)
+	llmRequest(g, "10.42.0.2", "GET", "/openai/responses/resp_1", "", nil)
+	llmRequest(g, "10.42.0.2", "GET", "/openai/responses/resp_1", "", nil)
 	var usage []llmUsageJSON
 	c.json("alice", "llm usage --json", &usage)
 	if len(usage) != 1 || usage[0].Requests != 1 || usage[0].Input != 2000 {
@@ -499,7 +499,7 @@ func TestGatewayLimitsEachVM(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			fromVM(g, "10.42.0.2", "POST", "/openai/responses", `{}`, nil)
+			llmRequest(g, "10.42.0.2", "POST", "/openai/responses", `{}`, nil)
 		}()
 	}
 	for deadline := time.Now().Add(5 * time.Second); ; {
@@ -515,18 +515,18 @@ func TestGatewayLimitsEachVM(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if w := fromVM(g, "10.42.0.2", "POST", "/openai/responses", `{}`, nil); w.Code != http.StatusTooManyRequests {
+	if w := llmRequest(g, "10.42.0.2", "POST", "/openai/responses", `{}`, nil); w.Code != http.StatusTooManyRequests {
 		t.Errorf("one too many: %d", w.Code)
 	}
 	done := make(chan *httptest.ResponseRecorder)
-	go func() { done <- fromVM(g, "10.42.0.3", "POST", "/openai/responses", `{}`, nil) }()
+	go func() { done <- llmRequest(g, "10.42.0.3", "POST", "/openai/responses", `{}`, nil) }()
 	time.Sleep(50 * time.Millisecond)
 	close(openai.hold)
 	wg.Wait()
 	if w := <-done; w.Code != 200 {
 		t.Errorf("another VM: %d", w.Code)
 	}
-	if w := fromVM(g, "10.42.0.2", "POST", "/openai/responses", `{}`, nil); w.Code != 200 {
+	if w := llmRequest(g, "10.42.0.2", "POST", "/openai/responses", `{}`, nil); w.Code != 200 {
 		t.Errorf("after the others ended: %d", w.Code)
 	}
 }
