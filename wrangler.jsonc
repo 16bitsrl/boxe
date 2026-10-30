@@ -1,0 +1,15 @@
+// The website at boxe.dev: the static files in site/. Publish with `wrangler deploy`.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "boxe",
+  "compatibility_date": "2026-10-30",
+  "assets": {
+    "directory": "site"
+  },
+  "routes": [
+    { "pattern": "boxe.dev", "custom_domain": true },
+    { "pattern": "www.boxe.dev", "custom_domain": true }
+  ],
+  "workers_dev": false,
+  "preview_urls": false
+}

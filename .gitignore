@@ -17,3 +17,10 @@ boxed.env
 net.conf
 ts-authkey
 tsnet/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
