@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,38 +22,49 @@ import (
 const agentPort = 1024
 
 // agent sends cmd to boxe-agent in the VM and returns an error unless it
-// answers ok. The VM's vsock is a Unix socket on the host: Cloud
-// Hypervisor connects us to a port in the VM after a CONNECT line.
+// answers ok.
 func (h *Hypervisor) agent(name, cmd string, timeout time.Duration) error {
+	_, err := h.ask(name, cmd, timeout)
+	return err
+}
+
+// ask sends cmd to boxe-agent in the VM and returns what it sends after its
+// ok, until it hangs up; an error unless it answers ok. The VM's vsock is a
+// Unix socket on the host: Cloud Hypervisor connects us to a port in the VM
+// after a CONNECT line.
+func (h *Hypervisor) ask(name, cmd string, timeout time.Duration) (string, error) {
 	c, err := h.dial("unix", vsockPath(name), 3*time.Second)
 	if err != nil {
-		return err
+		return "", fmt.Errorf("%w: %v", errAgentUnreachable, err)
 	}
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(timeout))
 	r := bufio.NewReader(c)
 	if _, err := fmt.Fprintf(c, "CONNECT %d\n", agentPort); err != nil {
-		return err
+		return "", err
 	}
 	if line, err := r.ReadString('\n'); err != nil || !strings.HasPrefix(line, "OK ") {
-		return fmt.Errorf("boxe-agent not reachable: %q %v", line, err)
+		return "", fmt.Errorf("%w: %q %v", errAgentUnreachable, line, err)
 	}
 	if _, err := fmt.Fprintf(c, "%s\n", cmd); err != nil {
-		return err
+		return "", err
 	}
 	reply, err := r.ReadString('\n')
 	if err != nil {
-		return fmt.Errorf("%w: %v", errAgentHungUp, err)
+		return "", fmt.Errorf("%w: %v", errAgentHungUp, err)
 	}
 	if reply = strings.TrimSpace(reply); reply != "ok" {
-		return fmt.Errorf("boxe-agent: %s", reply)
+		return "", fmt.Errorf("boxe-agent: %s", reply)
 	}
-	return nil
+	// What the VM sends is capped: it is the VM's to make up.
+	rest, err := io.ReadAll(io.LimitReader(r, 1<<20))
+	return string(rest), err
 }
 
 var (
-	errNoAgent     = errors.New("no boxe-agent")
-	errAgentHungUp = errors.New("boxe-agent hung up")
+	errNoAgent          = errors.New("no boxe-agent")
+	errAgentHungUp      = errors.New("boxe-agent hung up")
+	errAgentUnreachable = errors.New("boxe-agent not reachable")
 )
 
 // Fork creates v as a copy of the running VM src, memory included. On

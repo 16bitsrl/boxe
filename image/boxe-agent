@@ -5,6 +5,11 @@
 #   reconfigure   applies a new configuration disk while the VM runs: after
 #                 a fork the VM wakes up as a copy of its source, and takes
 #                 its own name, keys, MAC and IP address.
+#   schedule      ok, then what is scheduled in the VM, raw: the time zone,
+#                 the timers of systemd and of the users it keeps running,
+#                 the users' crontabs and the files in /etc/cron.d that no
+#                 package installed. The host works out when they run next,
+#                 to wake the VM up for them while it sleeps.
 #
 # Only the host can reach this port: vsock loopback is off in the kernel, so
 # programs in the VM cannot.
@@ -40,6 +45,30 @@ reconfigure)
     # The new host key and certificate.
     systemctl restart ssh
     reply ok
+    ;;
+schedule)
+    echo ok
+    echo "localtime $(readlink /etc/localtime)"
+    timers() { # <scope> <systemctl and its options>
+        echo "--- list-timers $1"
+        "${@:2}" list-timers --all --output=json 2>/dev/null
+        echo
+        echo "--- units $1"
+        "${@:2}" show --all -p Id -p FragmentPath -p LoadState '*.timer' 2>/dev/null
+    }
+    timers system systemctl
+    for u in /var/lib/systemd/linger/*; do
+        [[ -e $u ]] && timers "user ${u##*/}" systemctl --user -M "${u##*/}@"
+    done
+    for f in /var/spool/cron/crontabs/*; do
+        [[ -f $f ]] && { echo "--- crontab ${f##*/}"; cat "$f"; }
+    done
+    # "package: path" for each file a package installed.
+    packaged=$'\n'$(dpkg-query -S /etc/cron.d/* 2>/dev/null)$'\n'
+    for f in /etc/cron.d/*; do
+        [[ -f $f && $packaged != *": $f"$'\n'* ]] && { echo "--- cron.d ${f##*/}"; cat "$f"; }
+    done
+    exit 0
     ;;
 *) reply "error: unknown command" ;;
 esac

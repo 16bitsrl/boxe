@@ -301,11 +301,12 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 	if host != v.Name {
 		names = host + " " + v.Name
 	}
-	files := []struct {
+	type file struct {
 		path, data string
 		mode       int64
 		user       bool
-	}{
+	}
+	files := []file{
 		{"etc/hostname", host + "\n", 0o644, false},
 		{"etc/hosts", fmt.Sprintf("127.0.0.1 localhost\n127.0.1.1 %s\n::1 localhost ip6-localhost ip6-loopback\n", names), 0o644, false},
 		{"etc/resolv.conf", resolvConf(h.DNS), 0o644, false},
@@ -318,6 +319,10 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 		{"etc/boxe/net", fmt.Sprintf("ADDRESS=%s/16\nGATEWAY=10.42.0.1\nMAC=%s\n", v.IP(), v.MAC()), 0o644, false},
 		{"home/exedev/.config/boxe/AGENTS.md", h.agentsMD(v), 0o644, true},
 		{"etc/boxe/id", hex.EncodeToString(id) + "\n", 0o644, false},
+	}
+	if h.SleepDir != "" {
+		// The welcome message tells users the VM sleeps (image/boxe-welcome.sh).
+		files = append(files, file{"etc/boxe/sleeps", "", 0o644, false})
 	}
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -374,11 +379,16 @@ func (h *Hypervisor) agentsMD(v VM) string {
 			"- Only logged-in members of the team reach these URLs. The proxy sends the user's email in the `X-Box-Email` header (it drops any `X-Box-*` header sent by clients) and `X-Forwarded-Proto: https`. Visitors with a share link (`ssh boxe share`) come without `X-Box-Email`.\n"+
 			"- A desktop with Google Chrome: `sudo systemctl start boxe-desktop`, then run graphical programs with `DISPLAY=:1` (e.g. a headed browser to try a UI). Your user watches it at https://%[1]s--desktop.%[2]s.", v.Name, h.WebDomain)
 	}
+	sleep := ""
+	if h.SleepDir != "" {
+		sleep = fmt.Sprintf("- When nobody uses it for a while, the VM goes to sleep: its memory is saved and everything in it pauses. The next SSH connection or web request wakes it up where it was, in about a second. Cron jobs and systemd timers keep working: the VM wakes up shortly before each one and goes back to sleep after. A server that must answer without that delay, or a program that must keep running (a bot, a queue worker), needs `ssh boxe keep-awake %s on`, run from the user's computer.\n", v.Name)
+	}
 	return fmt.Sprintf("You are running in a boxe VM named %s: a microVM on the team's own infrastructure. It is similar to exe.dev, but exe.dev's services (LLM gateway, integrations, `ssh exe.dev`) are not available here: Shelley uses the models and API keys its user added in it.\n\n"+
 		"- Ubuntu, user `exedev` with passwordless sudo, persistent disk. Docker works.\n"+
 		"- Internet works. The team's LAN, the host and the other VMs are not reachable from here.\n"+
 		"%s\n"+
-		"- VMs are created, copied and deleted from the user's computer with `ssh boxe` (`ssh boxe help`), not from inside the VM.\n", v.Name, web)
+		"%s"+
+		"- VMs are created, copied and deleted from the user's computer with `ssh boxe` (`ssh boxe help`), not from inside the VM.\n", v.Name, web, sleep)
 }
 
 // newHostKey makes the VM's SSH host key and its certificate, signed by

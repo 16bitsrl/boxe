@@ -31,6 +31,7 @@ type fakeHost struct {
 	noAgent   bool              // VMs from an image without boxe-agent
 	agentErr  map[string]string // command -> error boxe-agent answers
 	hangUp    map[string]int    // "vm command" -> times boxe-agent hangs up without answering
+	schedule  map[string]string // vm -> what boxe-agent answers to schedule, after ok
 	noShelley bool              // Shelley in the VM does not answer
 	noModels  bool              // nobody added a model to Shelley yet
 	origin    map[string]string // clone -> snapshot it was made from
@@ -77,6 +78,9 @@ func (f *fakeHost) dial(network, addr string, _ time.Duration) (net.Conn, error)
 			return
 		}
 		reply := "ok"
+		if cmd == "schedule" {
+			reply += "\n" + strings.TrimSuffix(f.schedule[vm], "\n")
+		}
 		if e, ok := f.agentErr[cmd]; ok {
 			reply = "error: " + e
 		}
@@ -235,7 +239,7 @@ func newFakeHypervisor(t *testing.T) (*Hypervisor, *fakeHost) {
 		t.Fatal(err)
 	}
 	f := &fakeHost{fail: map[string]bool{}, running: map[string]bool{}, failed: map[string]bool{}, paused: map[string]bool{}, cpu: map[string]int64{},
-		agentErr: map[string]string{}, hangUp: map[string]int{}, origin: map[string]string{}, devDir: t.TempDir()}
+		agentErr: map[string]string{}, schedule: map[string]string{}, hangUp: map[string]int{}, origin: map[string]string{}, devDir: t.TempDir()}
 	h := &Hypervisor{BaseSnapshot: "boxe/images/base@base", Dataset: "boxe/vms", Kernel: "vmlinux",
 		ConfigDir: t.TempDir(), SleepDir: t.TempDir(), StateDir: t.TempDir(), HostCA: ca, DevDir: f.devDir, Exec: f.exec, Dial: f.dial}
 	return h, f

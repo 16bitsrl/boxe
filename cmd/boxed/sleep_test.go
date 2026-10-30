@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -335,5 +336,174 @@ func TestWakeAfterAnInterruptedWake(t *testing.T) {
 	}
 	if h.Sleeping("test") || h.State("test") != "running" || f.paused[unit("test")] {
 		t.Errorf("state %q, sleeping %v, paused %v", h.State("test"), h.Sleeping("test"), f.paused[unit("test")])
+	}
+}
+
+// cronAt is a schedule answer with a crontab line that runs at t (UTC).
+func cronAt(t time.Time) string {
+	t = t.UTC()
+	return fmt.Sprintf("localtime /usr/share/zoneinfo/Etc/UTC\n--- crontab exedev\n%d %d %d %d * /home/exedev/backup.sh\n",
+		t.Minute(), t.Hour(), t.Day(), int(t.Month()))
+}
+
+// A VM goes to sleep with the time of the next job scheduled in it (cron,
+// systemd timers), and ls says when it wakes up for it.
+func TestSleepRecordsTheNextJob(t *testing.T) {
+	c := newCLI(t, "alice")
+	c.must("alice", "new test")
+	job := time.Now().Add(2 * time.Hour).Truncate(time.Minute)
+	c.host.schedule["test"] = cronAt(job)
+	wakes := job.Add(-wakeLead)
+	if out := c.must("alice", "sleep test"); !strings.Contains(out, wakes.Local().Format("15:04")) {
+		t.Errorf("sleep does not say when it wakes up: %q", out)
+	}
+	var list []vmJSON
+	c.json("alice", "ls --json", &list)
+	if list[0].State != "sleeping" || list[0].WakesAt != wakes.UTC().Format(time.RFC3339) {
+		t.Errorf("state %q, wakes_at %q, want %s", list[0].State, list[0].WakesAt, wakes.UTC().Format(time.RFC3339))
+	}
+	if out := c.must("alice", "ls"); !strings.Contains(out, "sleeping (wakes "+wakes.Local().Format("15:04")+")") {
+		t.Errorf("ls:\n%s", out)
+	}
+	c.must("alice", "wake test")
+	list = nil
+	c.json("alice", "ls --json", &list)
+	if list[0].WakesAt != "" {
+		t.Errorf("awake, wakes_at %q", list[0].WakesAt)
+	}
+}
+
+// VMs from an older image, whose boxe-agent does not know schedule (or
+// without one), sleep as before: nothing wakes them up.
+func TestOlderImagesJustSleep(t *testing.T) {
+	c := newCLI(t, "alice")
+	c.must("alice", "new old")
+	c.must("alice", "new older")
+	c.host.agentErr["schedule"] = "unknown command"
+	c.must("alice", "sleep old")
+	c.host.noAgent = true
+	c.must("alice", "sleep older")
+	var list []vmJSON
+	c.json("alice", "ls --json", &list)
+	for _, v := range list {
+		if v.State != "sleeping" || v.WakesAt != "" {
+			t.Errorf("%s: state %q, wakes_at %q", v.Name, v.State, v.WakesAt)
+		}
+	}
+}
+
+// A sleeping VM wakes up shortly before its job, so that the job runs on
+// time inside it, and goes back to sleep soon after the job is done.
+func TestVMWakesForItsJobs(t *testing.T) {
+	c := newCLI(t, "alice")
+	b, f := c.box, c.host
+	b.sleepAfter = 30 * time.Minute
+	c.must("alice", "new test")
+	job := time.Now().Add(20 * time.Minute).Truncate(time.Minute)
+	f.schedule["test"] = cronAt(job)
+	c.must("alice", "sleep test")
+
+	b.wakeJobs(job.Add(-2 * wakeLead))
+	if s := b.hv.State("test"); s != "sleeping" {
+		t.Fatalf("%s too early", s)
+	}
+	b.wakeJobs(job.Add(-wakeLead))
+	if s := b.hv.State("test"); s != "running" {
+		t.Fatalf("%s at the job's time", s)
+	}
+	// The job runs for a while, then the VM is idle again.
+	b.sleepIdle(job.Add(-30 * time.Second))
+	f.mu.Lock()
+	f.cpu[unit("test")] += int64(20 * time.Second)
+	f.mu.Unlock()
+	b.sleepIdle(job.Add(30 * time.Second))
+	b.sleepIdle(job.Add(90 * time.Second))
+	if s := b.hv.State("test"); s != "running" {
+		t.Fatalf("%s while its job may still run", s)
+	}
+	b.sleepIdle(job.Add(150 * time.Second))
+	if s := b.hv.State("test"); s != "sleeping" {
+		t.Fatalf("%s after its job, want sleeping well before -sleep-after", s)
+	}
+	// Until the same time next year.
+	v, _ := b.store.Get("test")
+	if want := job.UTC().AddDate(1, 0, 0); !v.NextJob.Equal(want) {
+		t.Errorf("next job %s, want %s", v.NextJob, want)
+	}
+}
+
+// Someone who connects to a VM woken up for a job makes it a VM in use, which
+// sleeps after -sleep-after as usual.
+func TestUseAfterAJobKeepsTheVMAwake(t *testing.T) {
+	c := newCLI(t, "alice")
+	b := c.box
+	b.sleepAfter = 30 * time.Minute
+	c.must("alice", "new test")
+	job := time.Now().Add(20 * time.Minute).Truncate(time.Minute)
+	c.host.schedule["test"] = cronAt(job)
+	c.must("alice", "sleep test")
+	b.wakeJobs(job.Add(-wakeLead))
+	b.busy("test", 1)
+	b.busy("test", -1)
+	for i := range 10 {
+		b.sleepIdle(job.Add(time.Duration(i) * time.Minute))
+	}
+	if s := b.hv.State("test"); s != "running" {
+		t.Errorf("%s, want running", s)
+	}
+}
+
+// An idle VM whose next job is due soon stays awake for it: going to sleep
+// for a few minutes is not worth it.
+func TestIdleVMStaysAwakeForAJobSoon(t *testing.T) {
+	c := newCLI(t, "alice")
+	b := c.box
+	b.sleepAfter = 30 * time.Minute
+	c.must("alice", "new test")
+	now := time.Now()
+	job := now.Add(38 * time.Minute).Truncate(time.Minute)
+	c.host.schedule["test"] = cronAt(job)
+	for i := range 45 {
+		at := now.Add(time.Duration(i) * time.Minute)
+		b.sleepIdle(at)
+		if s := b.hv.State("test"); at.Before(job) && s != "running" {
+			t.Fatalf("%s at %s, with a job at %s", s, at, job)
+		}
+	}
+	if s := b.hv.State("test"); s != "sleeping" {
+		t.Errorf("%s after the job", s)
+	}
+}
+
+// Waking up for a job respects the owner's RAM quota, like any wake: if the
+// VM does not fit, that run is skipped and it wakes up for the next one.
+func TestJobWakeRespectsTheQuota(t *testing.T) {
+	c := newCLI(t, "alice")
+	b := c.box
+	b.limits = Limits{UserMem: 4096}
+	c.must("alice", "new a1 --mem 2G")
+	c.must("alice", "new b1 --mem 2G")
+	c.host.schedule["a1"] = "localtime /usr/share/zoneinfo/Etc/UTC\n--- crontab exedev\n*/10 * * * * x\n"
+	c.must("alice", "sleep a1")
+	c.must("alice", "new c1 --mem 2G")
+	b.busy("b1", 1)
+	b.busy("c1", 1)
+	v, _ := b.store.Get("a1")
+	due := v.NextJob
+	if due.IsZero() {
+		t.Fatal("no job")
+	}
+	b.wakeJobs(due.Add(-wakeLead))
+	if s := b.hv.State("a1"); s != "sleeping" {
+		t.Fatalf("a1 %s over the quota", s)
+	}
+	v, _ = b.store.Get("a1")
+	if want := due.Add(10 * time.Minute); !v.NextJob.Equal(want) {
+		t.Errorf("next job %s, want %s", v.NextJob, want)
+	}
+	b.busy("b1", -1)
+	b.wakeJobs(v.NextJob.Add(-wakeLead))
+	if a, b1 := b.hv.State("a1"), b.hv.State("b1"); a != "running" || b1 != "sleeping" {
+		t.Errorf("a1 %s, b1 %s", a, b1)
 	}
 }

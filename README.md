@@ -76,7 +76,14 @@ before you trust it with anything.
   little CPU and network) goes to sleep: Cloud Hypervisor saves its memory to
   `-sleep-dir` and exits, freeing RAM and CPU. The next `ssh <vm>.boxe` or web
   request wakes it up where it was, in about half a second: the memory is
-  mapped copy-on-write and read from disk as the VM touches it. Only awake
+  mapped copy-on-write and read from disk as the VM touches it. Cron jobs
+  and systemd timers still run: before the VM goes to sleep, `boxe-agent`
+  tells `boxed` what is scheduled in it, and `boxed` wakes it up a minute
+  before the next job and puts it back to sleep a couple of minutes after.
+  Only what users added counts (their crontabs and timers, not Ubuntu's
+  daily ones), and an idle VM with a job due within 10 minutes stays awake.
+  `ls` shows when a sleeping VM wakes up next. `keep-awake` is for servers
+  that must answer without the wake-up delay. Only awake
   VMs count against a member's RAM (`-max-user-mem`): waking one up puts
   their other idle VMs to sleep if needed, the longest unused first.
 - **Fork**: `ssh boxe fork` pauses a VM for a moment, saves its disk and
