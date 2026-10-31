@@ -509,6 +509,7 @@ func (w *Web) proxy(v VM, port int, email string) http.Handler {
 		Rewrite:   func(pr *httputil.ProxyRequest) { w.rewrite(pr, target, email) },
 		ModifyResponse: func(resp *http.Response) error {
 			dropBoxCookies(resp.Header)
+			privateCache(resp.Header)
 			return nil
 		},
 		ErrorHandler: func(rw http.ResponseWriter, r *http.Request, err error) {
@@ -568,6 +569,28 @@ func dropBoxCookies(h http.Header) {
 	for _, line := range keep {
 		h.Add("Set-Cookie", line)
 	}
+}
+
+// privateCache keeps a VM's answers out of shared caches: a CDN in front
+// (Cloudflare caches .js, .css and images by default) would hand a page
+// behind the login to anyone. The browser may still cache them.
+func privateCache(h http.Header) {
+	for _, k := range []string{"CDN-Cache-Control", "Cloudflare-CDN-Cache-Control", "Surrogate-Control"} {
+		h.Del(k)
+	}
+	keep := []string{"private"}
+	for _, v := range h.Values("Cache-Control") {
+		for _, d := range strings.Split(v, ",") {
+			d = strings.TrimSpace(d)
+			name, _, _ := strings.Cut(strings.ToLower(d), "=")
+			switch name {
+			case "", "public", "private", "s-maxage", "proxy-revalidate":
+			default:
+				keep = append(keep, d)
+			}
+		}
+	}
+	h.Set("Cache-Control", strings.Join(keep, ", "))
 }
 
 func (w *Web) redirectURI() string { return "https://" + w.cfg.Domain + "/oauth/callback" }

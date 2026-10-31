@@ -286,6 +286,10 @@ $ curl -X POST https://boxe.example.com/exec -H "Authorization: Bearer boxe_..."
   boxed accepts only from the panel's own origin and with a token bound to
   the session, which VM pages cannot read; the owner, or an admin, must type
   the VM's name to delete it.
+- **VM pages stay out of shared caches.** boxed marks every answer from a
+  VM `Cache-Control: private` and drops the headers meant for CDNs, so a
+  CDN in front (Cloudflare caches `.js` and `.css` by default) never hands
+  a page behind the login to someone else.
 - **VMs are untrusted.**
   - Each runs in its own Cloud Hypervisor process. The process runs as an
     unprivileged user with no capabilities, can open only its own disks,
@@ -317,16 +321,19 @@ $ curl -X POST https://boxe.example.com/exec -H "Authorization: Bearer boxe_..."
   send only to the gateway (DNS and integrations). Every DNS query of any VM
   goes to `boxed`, whichever server it asked.
 - **Copies and backups are crash-consistent**, like a disk after a power cut.
-- **Not covered:** the identity provider and the TLS proxy are yours to
+- **Not covered:** the identity provider and the TLS proxy (or the tunnel) are yours to
   secure. A hypervisor escape would still reach the host as the unprivileged
   VM user.
 
 ## Install
 
-Tested on Ubuntu 26.04 inside a Proxmox VM with nested virtualization.
-Bare metal is simpler and faster (for example a Hetzner dedicated server).
-Cloud VMs work only where nested virtualization is offered (GCP, Azure, AWS
-C8i/M8i/R8i).
+Tested on Ubuntu 26.04 inside a Proxmox VM with nested virtualization,
+also with no public IP behind a Cloudflare Tunnel (see
+[Without a public IP](#without-a-public-ip)). Bare metal is simpler and
+faster: a dedicated server (for example at Hetzner), or a spare PC at home
+or in the office with hardware virtualization (VT-x or AMD-V, on in the
+BIOS), an SSD and 16 GB of RAM for a few VMs awake at once. Cloud VMs work
+only where nested virtualization is offered (GCP, Azure, AWS C8i/M8i/R8i).
 
 1. **Host:** `/dev/kvm`, a ZFS pool (`zpool create boxe /dev/...`, then
    `zfs create boxe/vms`, `zfs create boxe/images` and, for sleep and fork,
@@ -400,6 +407,7 @@ C8i/M8i/R8i).
          reverse_proxy 127.0.0.1:8080
      }
      ```
+     A host with no public IP can use a Cloudflare Tunnel instead (below).
 7. **Deploy:** `scripts/deploy.sh <ssh-target>` builds `boxed` (it needs Go
    where you run it), installs it as a new version over SSH with `sudo`, and
    rolls back if it does not come up. `boxed` stops at start, saying why, if
@@ -408,6 +416,39 @@ C8i/M8i/R8i).
    `/etc/boxe/backup.conf`, install `boxe-backup.sh` and `boxe-restore.sh` in
    `/usr/local/sbin`, install `boxe-backup.service` and `boxe-backup.timer`,
    and enable the timer.
+
+### Without a public IP
+
+The host only needs to reach out: a PC behind a home router, or a server
+in a private network, is enough. SSH goes through Tailscale already. For
+the web, a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/)
+takes the place of the TLS proxy: `cloudflared` on the host dials out to
+Cloudflare, and nothing listens on the internet.
+
+- **Domain:** make `<domain>` the root of a zone on Cloudflare (VMs at
+  `<vm>.example.dev`, the panel at `example.dev`). Cloudflare's free
+  certificate covers a zone and one level below it; a subdomain such as
+  `boxe.example.com` needs Advanced Certificate Manager for
+  `*.boxe.example.com`.
+- **Tunnel:** create one with two public hostnames, `<domain>` and
+  `*.<domain>`, both to `http://localhost:8080`, and DNS records for both
+  (proxied CNAMEs to `<tunnel id>.cfargotunnel.com`). Run it on the host
+  with `cloudflared service install <token>`.
+- **boxed:** add `-http 127.0.0.1:8080`, and leave `BOXE_PROXY` out of
+  `net.conf`.
+- **SSH without Tailscale** can go through the same tunnel: a third public
+  hostname, `ssh.<domain>` to `ssh://localhost:2222`, `boxed` with
+  `-ts-hostname= -listen 127.0.0.1:2222`, and on each member's computer
+  [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/)
+  and this entry before the one from `ssh boxe ssh-config`:
+  ```
+  Host boxe
+    HostName ssh.<domain>
+    ProxyCommand cloudflared access ssh --hostname %h
+  ```
+- Cloudflare's limits apply to the web: uploads up to 100 MB on the free
+  plan, and a request that waits more than 100 seconds for an answer
+  fails. WebSockets (the agent, the desktop, apps) are not affected.
 
 ## Operations
 

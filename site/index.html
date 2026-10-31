@@ -257,14 +257,14 @@ ssh boxe known-hosts &gt;&gt; ~/.ssh/known_hosts</code></pre>
 <section class="install" id="install" aria-labelledby="install-title">
   <div class="install-head">
     <h2 id="install-title">Runs on one Linux host</h2>
-    <p>One machine with KVM and ZFS runs the whole thing. Bare metal is simplest and fastest, for example a Hetzner dedicated server. We test on Ubuntu 26.04 inside a Proxmox VM with nested virtualization. Cloud VMs work only where nested virtualization is offered: GCP, Azure, AWS C8i, M8i and R8i.</p>
+    <p>One machine with KVM and ZFS runs the whole thing. Bare metal is simplest and fastest: a dedicated server, for example at Hetzner, or a spare PC at home or in the office with hardware virtualization, an SSD and 16 GB of RAM. It needs no public IP: SSH goes through Tailscale, the web through a Cloudflare Tunnel. We test on Ubuntu 26.04 inside a Proxmox VM with nested virtualization, also behind a tunnel. Cloud VMs work only where nested virtualization is offered: GCP, Azure, AWS C8i, M8i and R8i.</p>
     <ul class="needs">
       <li><code>/dev/kvm</code> and a ZFS pool</li>
       <li>Cloud Hypervisor v54 or later</li>
       <li>A guest kernel from <code>cloud-hypervisor/linux</code></li>
       <li>Docker, to build the image</li>
       <li><code>nftables</code> and <code>iptables</code></li>
-      <li>For the web: an OIDC provider, a wildcard DNS record and certificate, a TLS proxy such as Caddy</li>
+      <li>For the web: an OIDC provider, and a wildcard DNS record with a TLS proxy such as Caddy, or a Cloudflare Tunnel if the host has no public IP</li>
       <li>Optional: Tailscale for <code>ssh boxe</code> on your tailnet, <code>restic</code> for nightly backups</li>
     </ul>
   </div>
@@ -335,7 +335,7 @@ sudo scripts/build-base.sh boxeuntu:20261030 boxeuntu-20261030</code></pre>
       </div>
       <div>
         <h3>The rest is yours</h3>
-        <p>You secure the identity provider and the TLS proxy. One host, no high availability, not a multi-tenant cloud.</p>
+        <p>You secure the identity provider and the TLS proxy or the tunnel. One host, no high availability, not a multi-tenant cloud.</p>
       </div>
       <a class="btn btn-red" href="https://github.com/16bitsrl/boxe#security-model">Read the security model</a>
     </div>

@@ -342,6 +342,38 @@ func TestWebVMCannotSetBoxCookies(t *testing.T) {
 	}
 }
 
+// A CDN in front (Cloudflare caches .js and .css by default) must not keep a
+// page behind the login and hand it to anyone; the browser still may.
+func TestWebVMAnswersStayOutOfSharedCaches(t *testing.T) {
+	wt := newWebTest(t)
+	b := wt.browser("member")
+	b.get("https://test.boxe.example/", nil)
+	for sent, want := range map[string]string{
+		"":                                    "private",
+		"public, max-age=31536000, immutable": "private, max-age=31536000, immutable",
+		"max-age=60, s-maxage=3600":           "private, max-age=60",
+		"no-store":                            "private, no-store",
+	} {
+		wt.reply = func(w http.ResponseWriter) {
+			if sent != "" {
+				w.Header().Set("Cache-Control", sent)
+			}
+			w.Header().Set("CDN-Cache-Control", "max-age=3600")
+			w.Header().Set("Cloudflare-CDN-Cache-Control", "max-age=3600")
+			w.Header().Set("Surrogate-Control", "max-age=3600")
+		}
+		res := b.do("https://test.boxe.example/app.js", nil)
+		if got := res.Header.Get("Cache-Control"); got != want {
+			t.Errorf("VM sent %q: Cache-Control %q, want %q", sent, got, want)
+		}
+		for _, h := range []string{"CDN-Cache-Control", "Cloudflare-CDN-Cache-Control", "Surrogate-Control"} {
+			if res.Header.Get(h) != "" {
+				t.Errorf("VM sent %q: %s passed on", sent, h)
+			}
+		}
+	}
+}
+
 func TestWebRejectsForgedStateAndCookies(t *testing.T) {
 	wt := newWebTest(t)
 	b := wt.browser("member")
