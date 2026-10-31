@@ -43,7 +43,7 @@ func fakeUpstream(t *testing.T) string {
 // queries come from a VM that reaches integrations only.
 func serveDNS(t *testing.T, closed bool) (udp, tcp string) {
 	t.Helper()
-	d := &DNS{Suffix: "boxe", Upstream: []string{fakeUpstream(t)}, Closed: func(netip.Addr) bool { return closed }}
+	d := &DNS{Suffix: "boxe", Domain: "boxe.example", Upstream: []string{fakeUpstream(t)}, Closed: func(netip.Addr) bool { return closed }}
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -88,6 +88,24 @@ func TestDNS(t *testing.T) {
 				}
 			} else if err != nil || len(ips) != 1 || ips[0].String() != "93.184.216.34" {
 				t.Errorf("open, %s example.com: %v %v", r.network, ips, err)
+			}
+			// A VM's own web name (in /etc/hosts only short): from upstream, the
+			// host's public address; a closed VM gets the gateway, which is all
+			// it reaches, so tools that look up the hostname (sudo) find it.
+			ips, err = res.LookupIP(ctx, "ip4", "quick-fox.boxe.example")
+			want := "93.184.216.34"
+			if closed {
+				want = "10.42.0.1"
+			}
+			if err != nil || len(ips) != 1 || ips[0].String() != want {
+				t.Errorf("closed %v, %s own name: %v %v", closed, r.network, ips, err)
+			}
+			// Only names of VMs: glibc also tries other names with the domain
+			// appended (example.com.boxe.example), which stay unknown.
+			for _, name := range []string{"quick-fox.boxe.example.evil.com", "example.com.boxe.example"} {
+				if _, err := res.LookupIP(ctx, "ip4", name); closed && (err == nil || !isNotFound(err)) {
+					t.Errorf("closed, %s %s: %v", r.network, name, err)
+				}
 			}
 		}
 	}

@@ -186,7 +186,7 @@ func main() {
 		}
 	}
 	// For the VMs, on the gateway: integrations and DNS (integrations.go, dns.go).
-	d := &DNS{Suffix: *sshSuffix, Upstream: splitList(*dns), Closed: b.dnsClosed}
+	d := &DNS{Suffix: *sshSuffix, Domain: webDomain, Upstream: splitList(*dns), Closed: b.dnsClosed}
 	pc, err := net.ListenPacket("udp", gatewayIP()+":53")
 	if err != nil {
 		log.Fatal(err)
@@ -195,7 +195,7 @@ func main() {
 	for port, serve := range map[string]func(net.Listener) error{"53": d.ServeTCP, "80": b.proxy().Serve} {
 		ln, err := net.Listen("tcp", gatewayIP()+":"+port)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalf("%v (if a server on this host, like the TLS proxy, listens on port %s of every address, bind it to the host's own addresses)", err, port)
 		}
 		go func() { log.Fatal(serve(limitListener(ln, newLimiter(vmConns, 16*vmConns)))) }()
 	}

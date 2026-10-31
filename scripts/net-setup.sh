@@ -99,13 +99,18 @@ COMMIT
 -A BOXE-DOCKER -i br0 -j ACCEPT
 -A BOXE-DOCKER -o br0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 # The host itself: VMs only get answers to what the host opened, boxed's DNS,
-# integrations and LLM gateway on the gateway address, and boxed's web port
-# only takes connections from the proxy.
+# integrations and LLM gateway on the gateway address, and the host's public
+# addresses as the internet reaches them (the rest of INPUT, the host's own
+# firewall, still applies: RETURN, not ACCEPT). boxed's web port only takes
+# connections from the proxy.
 -A BOXE-INPUT -i br0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 -A BOXE-INPUT -i br0 -d $GW -p udp --dport 53 -j ACCEPT
 -A BOXE-INPUT -i br0 -d $GW -p tcp --dport 53 -j ACCEPT
 -A BOXE-INPUT -i br0 -d $GW -p tcp --dport 80 -j ACCEPT
 -A BOXE-INPUT -i br0 -d $GW -p tcp --dport $LLM_PORT -j ACCEPT
+-A BOXE-INPUT -i br0 -p tcp --dport $WEB_PORT -j DROP
+-A BOXE-INPUT -i br0 -d $PRIVATE,127.0.0.0/8 -j DROP
+-A BOXE-INPUT -i br0 -m addrtype --dst-type LOCAL -j RETURN
 -A BOXE-INPUT -i br0 -j DROP
 -A BOXE-INPUT -p tcp --dport $WEB_PORT -i lo -j ACCEPT
 $proxy_rule

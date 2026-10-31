@@ -355,10 +355,9 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 	machineID := make([]byte, 16)
 	rand.Read(id)
 	rand.Read(machineID)
-	host, names := vmHostname(v.Name, h.WebDomain), v.Name
-	if host != v.Name {
-		names = host + " " + v.Name
-	}
+	// Only the short name on 127.0.1.1: the full one is the VM's public
+	// address, which it must reach as anyone does (DNS).
+	host := vmHostname(v.Name, h.WebDomain)
 	type file struct {
 		path, data string
 		mode       int64
@@ -366,7 +365,7 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 	}
 	files := []file{
 		{"etc/hostname", host + "\n", 0o644, false},
-		{"etc/hosts", fmt.Sprintf("127.0.0.1 localhost\n127.0.1.1 %s\n::1 localhost ip6-localhost ip6-loopback\n", names), 0o644, false},
+		{"etc/hosts", fmt.Sprintf("127.0.0.1 localhost\n127.0.1.1 %s\n::1 localhost ip6-localhost ip6-loopback\n", v.Name), 0o644, false},
 		{"etc/resolv.conf", "nameserver " + gatewayIP() + "\n", 0o644, false},
 		{"etc/machine-id", hex.EncodeToString(machineID) + "\n", 0o444, false},
 		{"etc/ssh/ssh_host_ed25519_key", hostKey, 0o600, false},
@@ -638,8 +637,11 @@ func (h *Hypervisor) start(v VM, restore bool) error {
 }
 
 // cmdline is v's kernel command line: its address on the VMs' network.
+// kvm-clock follows the host's clock across sleep and fork; with an
+// invariant TSC (bare metal) the guest would otherwise pick tsc, which
+// resumes where it stopped.
 func (h *Hypervisor) cmdline(v VM) string {
-	return fmt.Sprintf("console=ttyS0 root=/dev/vda rw init=/usr/local/bin/boxe-init ip=%s::%s:%s:%s:eth0:off quiet",
+	return fmt.Sprintf("console=ttyS0 root=/dev/vda rw init=/usr/local/bin/boxe-init clocksource=kvm-clock ip=%s::%s:%s:%s:eth0:off quiet",
 		v.IP(), gatewayIP(), vmMask(), v.Name)
 }
 

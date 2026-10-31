@@ -37,6 +37,12 @@ func TestOtherVMNetwork(t *testing.T) {
 		t.Errorf("cmdline %s", c)
 	}
 
+	// On a host with an invariant TSC the guest kernel would pick tsc, whose
+	// clock stays behind by the time a VM slept.
+	if c := h.cmdline(v); !strings.Contains(c, " clocksource=kvm-clock ") {
+		t.Errorf("cmdline %s", c)
+	}
+
 	st, err := openStore(t.TempDir() + "/boxe.db")
 	if err != nil {
 		t.Fatal(err)

@@ -64,7 +64,8 @@ install -m755 /tmp/boxed-$V $LIB/boxed-$V && rm /tmp/boxed-$V
 if [ -f /usr/local/sbin/boxed ] && [ ! -L /usr/local/sbin/boxed ]; then
 	mv /usr/local/sbin/boxed $LIB/boxed-before-deploy-script
 fi
-prev=$(readlink -f /usr/local/sbin/boxed 2>/dev/null || true)
+# -e: empty at the first deploy, when there is no boxed to go back to.
+prev=$(readlink -e /usr/local/sbin/boxed 2>/dev/null || true)
 switch() { ln -sfn "$1" /usr/local/sbin/boxed.new && mv -T /usr/local/sbin/boxed.new /usr/local/sbin/boxed; }
 switch $LIB/boxed-$V
 restart

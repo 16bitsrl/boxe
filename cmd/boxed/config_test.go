@@ -59,11 +59,13 @@ func TestConfigArchive(t *testing.T) {
 		}
 		return e
 	}
-	// The full name: Shelley adds .exe.xyz to a hostname without dots.
+	// The full name: Shelley adds .exe.xyz to a hostname without dots. Only
+	// the short one in /etc/hosts: the full one is the VM's public address,
+	// which the VM must reach like anyone else.
 	if e := check("etc/hostname", 0o644, 0, tar.TypeReg); e.contents != "quick-fox.boxe.example\n" {
 		t.Errorf("hostname: %q", e.contents)
 	}
-	if e := check("etc/hosts", 0o644, 0, tar.TypeReg); !strings.Contains(e.contents, "127.0.1.1 quick-fox.boxe.example quick-fox\n") {
+	if e := check("etc/hosts", 0o644, 0, tar.TypeReg); !strings.Contains(e.contents, "127.0.1.1 quick-fox\n") {
 		t.Errorf("hosts: %q", e.contents)
 	}
 	// boxed's own DNS server, which knows the integrations' names.

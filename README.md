@@ -85,10 +85,13 @@ before you trust it with anything.
   moment for it. `ssh boxe` commands, the prompt and other web requests in
   progress end. The front counts the connections it pipes to each VM, for
   sleep. It changes rarely and restarts only on purpose.
-- **Network**: VMs reach the internet only. They cannot reach each other, the
-  host (but for `boxed`'s DNS, integrations and LLM gateway on the gateway),
-  private networks, the tailnet or cloud metadata. Each tap may only
-  send with its own MAC and IP.
+- **Network**: VMs reach the internet, the host's public addresses
+  included, as anyone out there does: `https://<domain>`, other VMs' and
+  their own addresses work from inside. They cannot reach each other
+  directly, the host's private addresses (but for `boxed`'s DNS,
+  integrations and LLM gateway on the gateway), `boxed`'s web port,
+  private networks, the tailnet or cloud metadata. Each tap may only send
+  with its own MAC and IP.
 - **Sleep**: with `-sleep-after`, a VM nobody uses (no SSH or web connection,
   little CPU and network) goes to sleep: Cloud Hypervisor saves its memory to
   `-sleep-dir` and exits, freeing RAM and CPU. The next `ssh <vm>.boxe` or web
@@ -133,8 +136,9 @@ before you trust it with anything.
   port of the VM to anyone who has it, without logging in. `unshare` makes
   the VM's links stop working; deleting the VM does too.
 - **Integrations**: API keys stay on the host. A member adds one
-  (`ssh boxe integrations add http stripe --target https://api.stripe.com
-  --header 'Authorization: Bearer ...'`, or `-` instead of a value to read
+  (`ssh boxe "integrations add http stripe --target https://api.stripe.com
+  --header 'Authorization: Bearer ...'"`, the whole command in quotes so
+  the header reaches boxe in one piece, or `-` instead of a value to read
   it from stdin) and attaches it to their VMs; in those VMs
   `curl http://stripe.int.boxe/v1/customers` goes through `boxed`, which
   adds the header on the way out. `boxed` knows the VM by its address and
@@ -330,8 +334,9 @@ $ curl -X POST https://boxe.example.com/exec -H "Authorization: Bearer boxe_..."
 
 Tested on Ubuntu 26.04 inside a Proxmox VM with nested virtualization,
 also with no public IP behind a Cloudflare Tunnel (see
-[Without a public IP](#without-a-public-ip)). Bare metal is simpler and
-faster: a dedicated server (for example at Hetzner), or a spare PC at home
+[Without a public IP](#without-a-public-ip)), and on a bare metal server
+(a 2012 Xeon E5-1650: VMs ready in 1.6 to 1.8 s). Bare metal is simpler:
+a dedicated server (for example at Hetzner), or a spare PC at home
 or in the office with hardware virtualization (VT-x or AMD-V, on in the
 BIOS), an SSD and 16 GB of RAM for a few VMs awake at once. Cloud VMs work
 only where nested virtualization is offered (GCP, Azure, AWS C8i/M8i/R8i).
@@ -403,11 +408,17 @@ only where nested virtualization is offered (GCP, Azure, AWS C8i/M8i/R8i).
      `:8080`; `net-setup.sh` only lets the proxy reach it). With Caddy on
      the host, for example (the wildcard needs a DNS challenge):
      ```
+     {
+         default_bind <the host's public IPs>
+     }
      boxe.example.com, *.boxe.example.com {
          tls { dns <provider> ... }
          reverse_proxy 127.0.0.1:8080
      }
      ```
+     A proxy on the host must listen on the host's own addresses, not on
+     all of them: `boxed` needs port 80 of the VMs' gateway for
+     integrations.
      A host with no public IP can use a Cloudflare Tunnel instead (below).
 7. **Deploy:** `scripts/deploy.sh <ssh-target>` builds `boxed` (it needs Go
    where you run it), installs it as a new version over SSH with `sudo`, and

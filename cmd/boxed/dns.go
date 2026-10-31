@@ -16,9 +16,12 @@ import (
 // packet from br0, whatever server the VM asked. It answers the names of
 // integrations, <name>.int.<suffix>, with the gateway, and forwards the
 // rest upstream, but not for VMs that reach integrations only: they get
-// no other name, so DNS cannot carry their data out.
+// no other name, so DNS cannot carry their data out. Names of VMs,
+// <vm>.<domain>, they get as the gateway: tools that look up the VM's own
+// name (sudo) still find it.
 type DNS struct {
 	Suffix   string
+	Domain   string                   // the web domain, -domain; empty: none
 	Upstream []string                 // e.g. 1.1.1.1, or host:port
 	Closed   func(ip netip.Addr) bool // the VM at ip may resolve only integrations
 }
@@ -107,6 +110,9 @@ func (d *DNS) answer(q []byte, ip netip.Addr, tcp bool) []byte {
 		return d.reply(h, qs[0], dnsmessage.RCodeSuccess, qs[0].Type == dnsmessage.TypeA)
 	}
 	if d.Closed(ip) {
+		if vm, ok := strings.CutSuffix(name, "."+strings.ToLower(d.Domain)+"."); ok && d.Domain != "" && vm != "" && !strings.Contains(vm, ".") {
+			return d.reply(h, qs[0], dnsmessage.RCodeSuccess, qs[0].Type == dnsmessage.TypeA)
+		}
 		return d.reply(h, qs[0], dnsmessage.RCodeNameError, false)
 	}
 	if out, err := d.forward(q, tcp); err == nil {
