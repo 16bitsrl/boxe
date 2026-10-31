@@ -5,11 +5,11 @@
   </picture>
 </h1>
 
-**Your box, to the power of agents.**
+**Your box, elevated.**
 
-A small data center on hardware you already own: full Linux microVMs that
-start in about a second, with a coding agent in every one. Create one over
-SSH; it gets its own HTTPS address behind your team's login. boxe is a
+A small data center for you and your agents, on hardware you already own.
+Create a full Linux machine over SSH in about a second; it gets its own HTTPS
+address behind your team's login. boxe is a
 self-hosted take on [exe.dev](https://exe.dev): one Go daemon (`boxed`) on
 one Linux host with KVM and ZFS, and a small companion (`boxed -front`) that
 keeps users' connections open while `boxed` restarts.

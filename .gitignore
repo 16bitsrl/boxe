@@ -24,3 +24,6 @@ tsnet/
 !.dev.vars.example
 .env*
 !.env.example
+
+# Page review comments
+.review/
