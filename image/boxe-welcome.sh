@@ -8,7 +8,7 @@ if [[ $- == *i* ]]; then
     if [[ -n $_domain ]]; then
         echo "Port 8000 is at https://$_name.$_domain (team login),"
         echo "ports 3000-9999 at https://$_name--<port>.$_domain."
-        echo "Shelley, the agent, is at https://$_name--agent.$_domain (yours only),"
+        echo "Shelley, the agent, is at https://$_name--agent.$_domain (for who may use this VM),"
         echo "a desktop with a browser at https://$_name--desktop.$_domain (DISPLAY=:1)."
     fi
     if [[ -e /etc/boxe/sleeps ]]; then

@@ -229,7 +229,7 @@ func (b *Box) cmdExec(w io.Writer, user, line string) error {
 		return fmt.Errorf("usage: ssh %s exec <name> <command>", b.name)
 	}
 	name, cmd := m[1], strings.TrimSpace(m[2])
-	if _, err := b.owned(user, name); err != nil {
+	if _, err := b.usable(user, name); err != nil {
 		return err
 	}
 	if err := b.wake(user, name); err != nil {
@@ -238,7 +238,7 @@ func (b *Box) cmdExec(w io.Writer, user, line string) error {
 	// The VM's own host key, read with the VM under the lock: a VM that
 	// takes its name and address after it is deleted has another.
 	b.mu.RLock()
-	v, err := b.owned(user, name)
+	v, err := b.usable(user, name)
 	var hostKey string
 	if err == nil {
 		hostKey, err = b.hv.hostKey(v.Name)

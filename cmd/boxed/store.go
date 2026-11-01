@@ -82,6 +82,14 @@ CREATE TABLE IF NOT EXISTS shares (
 	port       INTEGER NOT NULL,
 	created_at TEXT NOT NULL
 );
+-- Members the owner let into a VM (ssh boxe access); user teamAccess: all.
+-- idx: the VM it was given for, not one that takes its name later.
+CREATE TABLE IF NOT EXISTS access (
+	vm   TEXT NOT NULL,
+	idx  INTEGER NOT NULL,
+	user TEXT NOT NULL,
+	PRIMARY KEY (vm, user)
+);
 CREATE TABLE IF NOT EXISTS samples (
 	vm   TEXT NOT NULL,
 	at   INTEGER NOT NULL, -- Unix seconds
@@ -257,10 +265,13 @@ func timeCol(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// Delete forgets the VM, its share links, integrations and usage: a new VM
+// Delete forgets the VM, its share links, who has access, integrations and usage: a new VM
 // with the same name must not inherit them. Its models' usage is kept apart.
 func (s *Store) Delete(name string) error {
 	if _, err := s.Unshare(name); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec("DELETE FROM access WHERE vm = ?", name); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec("DELETE FROM attachments WHERE vm = ?", name); err != nil {
@@ -305,6 +316,64 @@ func (s *Store) Unshare(name string) (int, error) {
 	}
 	n, err := res.RowsAffected()
 	return int(n), err
+}
+
+// teamAccess, as the user given access, is every member of the team.
+const teamAccess = "team"
+
+// Grant lets user into v (teamAccess: every member).
+func (s *Store) Grant(v VM, user string) error {
+	_, err := s.db.Exec("INSERT OR REPLACE INTO access (vm, idx, user) VALUES (?, ?, ?)", v.Name, v.Index, user)
+	return err
+}
+
+// Revoke takes user's access to the VM named name away; false if they had none.
+func (s *Store) Revoke(name, user string) (bool, error) {
+	res, err := s.db.Exec("DELETE FROM access WHERE vm = ? AND user = ?", name, user)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// Access is who the owner let into v, by name (teamAccess: every member).
+func (s *Store) Access(v VM) ([]string, error) {
+	return s.strings("SELECT user FROM access WHERE vm = ? AND idx = ? ORDER BY user", v.Name, v.Index)
+}
+
+// HasAccess says whether user may use v: theirs, or the owner let them
+// (or the team) in.
+func (s *Store) HasAccess(v VM, user string) bool {
+	if user == "" {
+		return false
+	}
+	if v.Owner == user {
+		return true
+	}
+	var n int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM access WHERE vm = ? AND idx = ? AND user IN (?, ?)", v.Name, v.Index, user, teamAccess).Scan(&n)
+	return err == nil && n > 0
+}
+
+// Usable are the VMs user may use, by name: theirs and those they have
+// access to.
+func (s *Store) Usable(user string) ([]VM, error) {
+	rows, err := s.db.Query("SELECT "+vmCols+" FROM vms WHERE owner = ? OR EXISTS (SELECT 1 FROM access a "+
+		"WHERE a.vm = vms.name AND a.idx = vms.idx AND a.user IN (?, ?)) ORDER BY name", user, user, teamAccess)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var vms []VM
+	for rows.Next() {
+		v, err := scanVM(rows)
+		if err != nil {
+			return nil, err
+		}
+		vms = append(vms, v)
+	}
+	return vms, rows.Err()
 }
 
 // Sample is what a VM used at a time: CPU over the minute before (100: one

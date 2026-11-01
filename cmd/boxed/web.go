@@ -81,10 +81,10 @@ const (
 	authMaxAge = 12 * time.Hour
 	vmWebPort  = 8000
 	minVMPort  = 3000 // other ports: <vm>--<port>, 3000-9999
-	// Shelley in the VM (image/shelley.socket): <vm>--agent, owner only.
+	// Shelley in the VM (image/shelley.socket): <vm>--agent, for who may use the VM.
 	// Below minVMPort, so not reachable as <vm>--<port>.
 	agentWebPort = 2999
-	// noVNC in the VM (image/boxe-desktop-web.socket): <vm>--desktop, owner only.
+	// noVNC in the VM (image/boxe-desktop-web.socket): <vm>--desktop, the same.
 	desktopWebPort = 2998
 )
 
@@ -209,12 +209,13 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if port == agentWebPort || port == desktopWebPort {
-		// The agent and the desktop are a shell in the VM: its owner's
-		// only. VM pages are same-site, so one of them could otherwise post
-		// to them, or open a WebSocket, with the owner's session.
+		// The agent and the desktop are a shell in the VM: for its owner
+		// and the members with access only. VM pages are same-site, so one
+		// of them could otherwise post to them, or open a WebSocket, with
+		// their session.
 		what := map[int]string{agentWebPort: "agent", desktopWebPort: "desktop"}[port]
-		if w.ownerEmail == nil || email == "" || w.ownerEmail(v.Owner) != strings.ToLower(email) {
-			http.Error(rw, "Only "+v.Owner+" can use the "+what+" of "+v.Name+".", http.StatusForbidden)
+		if !w.mayUse(v, email) {
+			http.Error(rw, "Only "+v.Owner+" and who they gave access to can use the "+what+" of "+v.Name+".", http.StatusForbidden)
 			return
 		}
 		if err := http.NewCrossOriginProtection().Check(r); err != nil {
@@ -241,6 +242,22 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.proxy(v, port, email).ServeHTTP(rw, r)
+}
+
+// mayUse says whether the member logged in as email may use v as a shell:
+// its owner, or a member they gave access to.
+func (w *Web) mayUse(v VM, email string) bool {
+	if email == "" {
+		return false
+	}
+	if w.ownerEmail != nil && w.ownerEmail(v.Owner) == strings.ToLower(email) {
+		return true
+	}
+	if w.memberOf == nil {
+		return false
+	}
+	user, _ := w.memberOf(email)
+	return user != "" && w.store.HasAccess(v, user)
 }
 
 // openShare lets the visitor in with a share link: a host-only cookie for

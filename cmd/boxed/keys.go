@@ -83,6 +83,13 @@ func (k *Keys) InTeam(user string) bool {
 	return slices.Contains(k.users, user)
 }
 
+// Users are the members, in the order of the users file.
+func (k *Keys) Users() []string {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return slices.Clone(k.users)
+}
+
 // Admin says whether user is marked admin in the users file.
 func (k *Keys) Admin(user string) bool {
 	k.mu.RLock()

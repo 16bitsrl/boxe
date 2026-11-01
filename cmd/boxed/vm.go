@@ -372,6 +372,7 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 		{"etc/ssh/ssh_host_ed25519_key.pub", hostPub, 0o644, false},
 		{"etc/ssh/ssh_host_ed25519_key-cert.pub", hostCert, 0o644, false},
 		{"home/exedev/.ssh/authorized_keys", authorizedKeys + h.HostPubKey, 0o600, true},
+		{"etc/ssh/sshd_config.d/boxe-access.conf", sshdAccessConf(), 0o644, false},
 		{"etc/boxe/web-domain", h.WebDomain + "\n", 0o644, false},
 		{"etc/boxe/net", fmt.Sprintf("ADDRESS=%s/%d\nGATEWAY=%s\nMAC=%s\n", v.IP(), vmNet.Bits(), gatewayIP(), v.MAC()), 0o644, false},
 		{"home/exedev/.config/boxe/AGENTS.md", h.agentsMD(v), 0o644, true},

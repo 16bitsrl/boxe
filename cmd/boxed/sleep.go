@@ -469,11 +469,11 @@ func (b *Box) sample(now time.Time) {
 }
 
 // wake wakes the VM named name if it sleeps, and waits for its SSH server.
-// user: only the owner may wake it; empty: any member (the web).
+// user: only who may use it may wake it; empty: any member (the web).
 func (b *Box) wake(user, name string) error {
 	b.mu.Lock()
 	v, err := b.store.Get(name)
-	if err == nil && user != "" && v.Owner != user {
+	if err == nil && user != "" && !b.store.HasAccess(v, user) {
 		err = errNotFound
 	}
 	if err != nil || !b.hv.Sleeping(name) {
@@ -661,7 +661,7 @@ func (b *Box) cmdWake(o output, user string, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: ssh %s wake <name>", b.name)
 	}
-	if _, err := b.owned(user, args[0]); err != nil {
+	if _, err := b.usable(user, args[0]); err != nil {
 		return err
 	}
 	if err := b.wake(user, args[0]); err != nil {

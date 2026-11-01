@@ -335,6 +335,23 @@ func (w *Web) find(rw http.ResponseWriter, p panelPage, name string) (vmJSON, bo
 	return vmJSON{}, false
 }
 
+// manages is the VM name if p's member may manage it: theirs, or anyone's
+// for an admin. Members with access use a VM, they do not manage it.
+func (w *Web) manages(rw http.ResponseWriter, p panelPage, name string) (vmJSON, bool) {
+	v, ok := w.find(rw, p, name)
+	if ok && v.Owner != p.User && !p.Admin {
+		w.notFound(rw, p)
+		return vmJSON{}, false
+	}
+	return v, ok
+}
+
+// usable says whether user may use the VM v as a shell: its agent and desktop.
+func (w *Web) usable(v vmJSON, user string) bool {
+	vm, err := w.store.Get(v.Name)
+	return err == nil && w.store.HasAccess(vm, user)
+}
+
 func (w *Web) vmDetail(rw http.ResponseWriter, p panelPage, name, rng string) {
 	if v, ok := w.find(rw, p, name); ok {
 		w.vmPage(rw, http.StatusOK, p, v, rng)
@@ -356,7 +373,7 @@ func (w *Web) vmPage(rw http.ResponseWriter, status int, p panelPage, v vmJSON, 
 	host := func(label string) string { return "https://" + label + "." + w.cfg.Domain }
 	p.Links = []panelLink{{"Web", host(v.Name)}}
 	p.Owns = v.Owner == p.User
-	if p.Owns {
+	if p.Owns || w.usable(v, p.User) {
 		p.Links = append(p.Links, panelLink{"Agent", host(v.Name + "--agent")}, panelLink{"Desktop", host(v.Name + "--desktop")})
 	}
 	p.Manage = v.Owner == p.User || p.Admin
@@ -369,9 +386,9 @@ func (w *Web) vmPage(rw http.ResponseWriter, status int, p panelPage, v vmJSON, 
 const consoleLines = 200
 
 // consolePage shows what the VM name printed lately, to whoever may manage
-// it: what they see is what they manage (see visible).
+// it: its owner or an admin, not the members with access.
 func (w *Web) consolePage(rw http.ResponseWriter, p panelPage, name string) {
-	v, ok := w.find(rw, p, name)
+	v, ok := w.manages(rw, p, name)
 	if !ok {
 		return
 	}
@@ -444,9 +461,9 @@ func (w *Web) act(rw http.ResponseWriter, r *http.Request, name, action string) 
 		w.createVM(rw, r, p, s.E, n, nil, newCommand(n, def))
 		return
 	}
-	// Whoever sees a VM may manage it; restart and remove check it again,
-	// and copy only copies the member's own.
-	v, ok := w.find(rw, p, name)
+	// Its owner or an admin; restart and remove check it again, and copy
+	// only copies the member's own.
+	v, ok := w.manages(rw, p, name)
 	if !ok {
 		return
 	}

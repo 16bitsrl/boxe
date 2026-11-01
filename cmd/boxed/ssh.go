@@ -164,7 +164,7 @@ func (b *Box) help(cmd string) string {
 	h := strings.NewReplacer("SSH ", cmd, "SUFFIX", b.hv.SSHSuffix).Replace(`boxe: microVMs for your team
 
   SSH new [name]                        create a VM (options: --cpu 2 --mem 2G --ttl 2h --image <name>)
-  SSH ls [-a]                           your VMs (-a: everyone's)
+  SSH ls [-a]                           your VMs and those you may use (-a: everyone's)
   SSH rm <name>                         delete a VM (an admin: anyone's)
   SSH cp <name> [new-name]              copy a VM, even a running one (as after a power cut)
   SSH fork <name> [new-name]            copy a running VM with its memory: programs keep running
@@ -175,6 +175,7 @@ func (b *Box) help(cmd string) string {
   SSH keep-awake <name> on|off          never put this VM to sleep when unused
   SSH share <name> [port]               a link that shows the VM (port 8000) to anyone who has it
   SSH unshare <name>                    make the VM's links stop working
+  SSH access <name> [add|rm <member>]   let other members use a VM (or the whole team: team)
   SSH exec <name> <command>             run a command in a VM, as ssh <name>.SUFFIX <command> does
   SSH egress <name> all|integrations    let the VM reach the internet, or only its integrations
   SSH integrations                      your API secrets, which VMs use without seeing them:
@@ -199,7 +200,7 @@ Add --agent <what to do>, last, to new, cp or fork: the VM's agent starts on it.
 To log into a VM: ssh <name>.SUFFIX
 `)
 	if d := b.hv.WebDomain; d != "" {
-		h += fmt.Sprintf("On the web: https://<name>.%s (port 8000),\n            https://<name>--<port>.%s (ports 3000-9999),\n            https://<name>--agent.%s (the agent, yours only),\n            https://<name>--desktop.%s (a desktop with a browser, yours only)\n", d, d, d, d)
+		h += fmt.Sprintf("On the web: https://<name>.%s (port 8000),\n            https://<name>--<port>.%s (ports 3000-9999),\n            https://<name>--agent.%s (the agent, for who may use the VM),\n            https://<name>--desktop.%s (a desktop with a browser, the same)\n", d, d, d, d)
 	}
 	return h + fmt.Sprintf("\nOnce per computer:\n  ssh %[1]s ssh-config >> ~/.ssh/config\n  ssh %[1]s known-hosts >> ~/.ssh/known_hosts\n", b.name)
 }
@@ -284,6 +285,8 @@ func (b *Box) run(w io.Writer, ask func(prompt string) (string, error), user, li
 		err = b.cmdShare(o, user, args[1:])
 	case args[0] == "unshare":
 		err = b.cmdUnshare(o, user, args[1:])
+	case args[0] == "access":
+		err = b.cmdAccess(o, user, args[1:])
 	case args[0] == "egress":
 		err = b.cmdEgress(o, user, args[1:])
 	case args[0] == "integrations":
@@ -1037,10 +1040,13 @@ func (b *Box) cmdLs(o output, user string, args []string) error {
 	return w.Flush()
 }
 
-// list is the VMs of owner (all with ""), with what each uses, as ls and
-// the panel show them.
-func (b *Box) list(owner string, now time.Time) ([]VM, []vmJSON, error) {
-	vms, err := b.store.List(owner)
+// list is the VMs user may use, theirs and those they have access to (all
+// with ""), with what each uses, as ls and the panel show them.
+func (b *Box) list(user string, now time.Time) ([]VM, []vmJSON, error) {
+	vms, err := b.store.List("")
+	if user != "" {
+		vms, err = b.store.Usable(user)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1127,7 +1133,7 @@ func (b *Box) jump(user, host string, port uint32) (VM, net.Conn, gossh.Rejectio
 	// address given to someone else's VM in between.
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	v, err := b.owned(user, name)
+	v, err := b.usable(user, name)
 	if err != nil {
 		return v, nil, gossh.Prohibited, err
 	}

@@ -377,6 +377,18 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
+	if host == gatewayIP() && r.URL.Path == "/ssh-keys" {
+		p.b.mu.RLock()
+		defer p.b.mu.RUnlock()
+		v, err := p.b.caller(r.RemoteAddr)
+		conn, _ := r.Context().Value(connVMKey{}).(VM)
+		if err != nil || !conn.same(v) || conn.Name != v.Name {
+			http.Error(w, "only boxe VMs ask for their keys", http.StatusForbidden)
+			return
+		}
+		p.b.serveSSHKeys(w, r, v)
+		return
+	}
 	name, ok := strings.CutSuffix(host, ".int."+p.b.hv.SSHSuffix)
 	if !ok || name == "" || strings.Contains(name, ".") {
 		p.forbid(w)

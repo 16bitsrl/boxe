@@ -113,7 +113,8 @@ before you trust it with anything.
   memory together, and restores the copy from them. `boxe-agent` in the copy
   (over vsock) then applies the copy's own name, keys, MAC and IP address.
 - **Agent**: every VM has [Shelley](https://github.com/boldsoftware/shelley)
-  at `https://<vm>--agent.<domain>`, for its owner only. It uses the API keys
+  at `https://<vm>--agent.<domain>`, for its owner (and the members with access,
+  below) only. It uses the API keys
   of its owner's account (below), or models and keys added in Shelley itself.
   `--agent <prompt>`, last on the line of `new`, `cp` or `fork`, starts a
   conversation in the new VM and prints its link.
@@ -132,12 +133,23 @@ before you trust it with anything.
   shared team key and no limit on spending: each member pays their own
   provider bill.
 - **Desktop**: every VM has a desktop with Google Chrome at
-  `https://<vm>--desktop.<domain>` (KasmVNC), for its owner only. It starts on
+  `https://<vm>--desktop.<domain>` (KasmVNC), for its owner (and the members
+  with access) only. It starts on
   first use. Agents in the VM use it with `DISPLAY=:1`, for example to try a
   UI in a real browser while you watch.
 - **Share links**: `ssh boxe share <vm> [port]` prints a link that shows that
   port of the VM to anyone who has it, without logging in. `unshare` makes
   the VM's links stop working; deleting the VM does too.
+- **Access**: `ssh boxe access <vm> add <member>` lets another member use a
+  VM as its owner does: SSH, `exec`, waking it up, the agent and the desktop;
+  `add team` lets in every member, `rm` takes access away, `access <vm>`
+  shows who has it. The VM shows up in their `ls` and panel. Managing it
+  (`rm`, `restart`, `ttl`, `share`, `egress`, integrations, `cp`) stays the
+  owner's. Inside the VM, sshd asks boxed for the keys that may log in
+  (`AuthorizedKeysCommand` on the bridge address, the VM known by its
+  address), so access given or taken away counts at the next login, and a
+  member who leaves the team loses it. VMs made before this feature lack that
+  setting: copy them (`cp`) to get it. Copies do not inherit access.
 - **Integrations**: API keys stay on the host. A member adds one
   (`ssh boxe "integrations add http stripe --target https://api.stripe.com
   --header 'Authorization: Bearer ...'"`, the whole command in quotes so
@@ -164,8 +176,8 @@ before you trust it with anything.
   (for example `image/laravel/`, with PHP, Composer and Node).
   `ssh boxe images` lists them and `ssh boxe new --image laravel` starts
   from the newest version.
-- **Panel**: `https://<domain>`, behind team login, lists your VMs (all of
-  them for an admin) with their links and usage, charts of their CPU, RAM
+- **Panel**: `https://<domain>`, behind team login, lists your VMs and those you
+  may use (all of them for an admin) with their links and usage, charts of their CPU, RAM
   and disk over 24 hours, 7 or 30 days, and shows your account: the SSH keys
   boxe lets in, how to set up SSH, and logging out everywhere. Members make
   new VMs there and copy theirs. The owner of a VM, and an admin, can read
@@ -179,7 +191,7 @@ before you trust it with anything.
 
 ```
 ssh boxe new [name]                        create a VM (--cpu 2 --mem 2G --ttl 2h --image <name>)
-ssh boxe ls [-a]                           your VMs and what they use (-a: everyone's)
+ssh boxe ls [-a]                           your VMs, those you may use, what they use (-a: everyone's)
 ssh boxe rm <name>                         delete a VM (an admin: anyone's)
 ssh boxe cp <name> [new-name]              copy a VM, even a running one
 ssh boxe fork <name> [new-name]            copy a running VM with its memory
@@ -190,6 +202,7 @@ ssh boxe wake <name>                       wake a VM up (connecting does too)
 ssh boxe keep-awake <name> on|off          never put this VM to sleep
 ssh boxe share <name> [port]               a link to the VM for anyone (port 8000)
 ssh boxe unshare <name>                    make the VM's links stop working
+ssh boxe access <name> [add|rm <member>]   let other members use a VM (or every member: team)
 ssh boxe exec <name> <command>             run a command in a VM and print what it printed
 ssh boxe egress <name> all|integrations     let the VM reach the internet, or only its integrations
 ssh boxe integrations                      your integrations: API secrets your VMs use without seeing them
@@ -272,7 +285,8 @@ $ curl -X POST https://boxe.example.com/exec -H "Authorization: Bearer boxe_..."
 ## Security model
 
 - **Members trust each other on the web.** Any logged-in member can reach
-  any VM over HTTPS; SSH is owner-only. Apps in VMs get `X-Box-Email` from
+  any VM over HTTPS; SSH is for the owner and the members they gave access
+  to. Apps in VMs get `X-Box-Email` from
   `boxed`, which strips any `X-Box-*` header a client sends. VMs are not
   reachable any other way, so the header can be trusted inside the VM. Apps
   must still protect themselves against CSRF from other VMs' pages.
@@ -282,12 +296,16 @@ $ curl -X POST https://boxe.example.com/exec -H "Authorization: Bearer boxe_..."
   port, and stop working with `unshare` or when the VM is deleted; a
   visitor who opened one keeps a cookie for 7 days, checked against the
   link at every request.
-- **The agent and the desktop are owner-only.** They are a shell in the VM,
-  like SSH. boxed serves them only to the member whose email is next to the
-  VM owner's GitHub username in `/etc/boxe/users`, and refuses requests that
-  change something, and WebSockets, unless they come from their own page,
-  so other VMs' pages cannot drive them with the owner's session. They
-  cannot be shared.
+- **The agent and the desktop are for who may use the VM.** They are a
+  shell in the VM, like SSH. boxed serves them only to the member whose
+  email is next to the GitHub username of the VM's owner, or of a member
+  with access, in `/etc/boxe/users`, and refuses requests that change
+  something, and WebSockets, unless they come from their own page, so other
+  VMs' pages cannot drive them with that member's session.
+- **Access is a shell, with the owner's credentials.** A member with access
+  to a VM sees everything in it, and what runs there uses the owner's model
+  keys and integrations and counts against the owner's limits. Give it to
+  people you would hand your laptop to.
 - **The panel's actions come only from the panel.** VM pages are on the
   same site as `https://<domain>`, so the browser sends them the panel's
   cookie too. Creating, copying, restarting or deleting a VM is a POST that

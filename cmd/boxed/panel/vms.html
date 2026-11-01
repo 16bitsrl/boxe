@@ -26,7 +26,7 @@
 <tbody>
 {{range .VMs}}
 <tr>
-  <td><a class="name" href="/vm/{{.Name}}">{{.Name}}</a><span class="sub">{{.CPUs}} vCPU · {{.Mem}}{{if .Image}} · {{.Image}}{{end}}</span></td>
+  <td><a class="name" href="/vm/{{.Name}}">{{.Name}}</a><span class="sub">{{.CPUs}} vCPU · {{.Mem}}{{if .Image}} · {{.Image}}{{end}}{{if and (not $.Admin) (ne .Owner $.User)}} · {{.Owner}}'s{{end}}</span></td>
   {{if $.Admin}}<td class="owner">{{.Owner}}</td>{{end}}
   <td><span class="state is-{{.State}}">{{.State}}</span></td>
   <td class="num" data-label="CPU">{{pct .CPUPercent}}</td>
