@@ -91,6 +91,7 @@ type Limits struct {
 	VMMem   int // per VM
 	UserMem int // total of a member's VMs that are awake
 	UserVMs int // number of a member's VMs
+	HostMem int // total of all awake VMs, everyone's
 }
 
 // admit says whether user may have one more VM with mem.
@@ -719,6 +720,14 @@ func (b *Box) create(o output, user, name string, cpus int, mem string, srcName,
 		return fmt.Errorf("a VM named %s already exists", name)
 	}
 	if err := b.admit(user, mem); err != nil {
+		b.mu.Unlock()
+		return err
+	}
+	keep := ""
+	if src != nil {
+		keep = src.Name
+	}
+	if err := b.makeHostRoom(VM{Name: name, Mem: mem}, keep); err != nil {
 		b.mu.Unlock()
 		return err
 	}

@@ -567,7 +567,9 @@ func (h *Hypervisor) start(v VM, restore bool) error {
 		// After a crash, not again from the same memory: the disk has moved on.
 		props = append(props, "Restart=no")
 	} else {
-		props = append(props, "Restart=on-failure", "RestartSec=2")
+		// A hypervisor that died (the host's OOM killer) leaves its vsock
+		// socket behind, and the next one could not bind it.
+		props = append(props, "Restart=on-failure", "RestartSec=2", "ExecStartPre=/usr/bin/rm -f "+vsockPath(v.Name))
 	}
 	if h.StateDir != "" {
 		props = append(props, "TemporaryFileSystem="+h.StateDir+":ro",

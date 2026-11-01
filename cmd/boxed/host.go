@@ -102,3 +102,19 @@ func meminfo(field string) int64 {
 	}
 	return 0
 }
+
+// hostMemLimit is the most RAM, in MiB, all awake VMs may have together
+// (0: no limit), from -max-host-mem and the host's RAM in bytes. Empty:
+// the host's RAM less what the host itself needs, 10% and at least 1G.
+func hostMemLimit(flag string, total int64) (int, error) {
+	switch {
+	case flag == "0":
+		return 0, nil
+	case flag != "":
+		return memMiB(flag)
+	case total <= 0:
+		return 0, nil
+	}
+	mib := int(total >> 20)
+	return mib - max(mib/10, 1024), nil
+}

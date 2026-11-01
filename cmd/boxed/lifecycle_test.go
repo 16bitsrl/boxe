@@ -386,6 +386,26 @@ func TestStartConfinesTheHypervisor(t *testing.T) {
 	}
 }
 
+// A hypervisor that dies (killed by the host's OOM killer) leaves its vsock
+// socket behind: the next one cannot bind it, and the VM never comes back.
+func TestRestartAfterCrashFindsNoStaleSocket(t *testing.T) {
+	h, f := newFakeHypervisor(t)
+	v := VM{Name: "test", Index: 2, CPUs: 2, Mem: "2G"}
+	h.writeConfig(v, "")
+	os.MkdirAll(filepath.Join(f.devDir, "boxe/vms"), 0o755)
+	os.WriteFile(filepath.Join(f.devDir, h.ds(v.Name)), nil, 0o600)
+	h.Start(v)
+	var run string
+	for _, c := range f.cmds {
+		if strings.HasPrefix(c, "systemd-run") {
+			run = c
+		}
+	}
+	if want := "-p ExecStartPre=/usr/bin/rm -f " + vsockPath(v.Name); !strings.Contains(run, want) {
+		t.Errorf("systemd-run lacks %q:\n%s", want, run)
+	}
+}
+
 func TestAdmission(t *testing.T) {
 	s, err := openStore(filepath.Join(t.TempDir(), "boxe.db"))
 	if err != nil {

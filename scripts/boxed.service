@@ -11,6 +11,8 @@ EnvironmentFile=-/etc/boxe/boxed.env
 ExecStart=/usr/local/sbin/boxed $BOXED_FLAGS -sockets /run/boxe/front
 Restart=on-failure
 RestartSec=2
+# If the host runs out of memory, its OOM killer takes a VM, never this.
+OOMScoreAdjust=-900
 
 [Install]
 WantedBy=multi-user.target

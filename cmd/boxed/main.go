@@ -53,6 +53,7 @@ func main() {
 		vmMem       = flag.String("max-vm-mem", "8G", "most RAM a VM may have")
 		userMem     = flag.String("max-user-mem", "16G", "most RAM a member's awake VMs may have together")
 		userVMs     = flag.Int("max-user-vms", 10, "most VMs a member may have")
+		hostMem     = flag.String("max-host-mem", "", "most RAM all awake VMs may have together; idle VMs go to sleep to make room. Empty: the host's RAM less 10% (at least 1G); 0: no limit. More than the host's RAM only with swap or zram on the host")
 		minFree     = flag.Int64("min-free-gb", 20, "refuse new VMs when the pool has less free space (GB)")
 		sleepDir    = flag.String("sleep-dir", "", "where sleeping VMs keep their memory, e.g. /boxe/sleep (a ZFS dataset); empty: VMs never sleep")
 		sleepAfter  = flag.Duration("sleep-after", 0, "put a VM to sleep after this long unused (no SSH or web connection, little CPU and traffic), e.g. 30m; 0: never")
@@ -130,6 +131,9 @@ func main() {
 		}
 	}
 	limits.UserVMs = *userVMs
+	if limits.HostMem, err = hostMemLimit(*hostMem, meminfo("MemTotal")); err != nil {
+		log.Fatalf("-max-host-mem: %v", err)
+	}
 	name := *tsName
 	if name == "" {
 		name = "boxe"

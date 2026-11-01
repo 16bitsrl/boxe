@@ -106,6 +106,9 @@ before you trust it with anything.
   that must answer without the wake-up delay. Only awake
   VMs count against a member's RAM (`-max-user-mem`): waking one up puts
   their other idle VMs to sleep if needed, the longest unused first.
+  All awake VMs also share the host's RAM (`-max-host-mem`, by default the
+  host's RAM less 10%): a new or waking VM puts to sleep anyone's VM that
+  has had no connection and no work for 5 minutes, or is refused.
 - **Fork**: `ssh boxe fork` pauses a VM for a moment, saves its disk and
   memory together, and restores the copy from them. `boxe-agent` in the copy
   (over vsock) then applies the copy's own name, keys, MAC and IP address.
@@ -346,6 +349,11 @@ only where nested virtualization is offered (GCP, Azure, AWS C8i/M8i/R8i).
    `zfs create boxe/sleep`), Docker (to build the image), `nftables`,
    `iptables` and `restic` (for backups). On Ubuntu:
    `apt install zfsutils-linux docker.io nftables iptables restic`.
+   Cap ZFS's cache, which otherwise takes up to all the RAM the VMs need,
+   e.g. to 2 GB: `echo options zfs zfs_arc_max=2147483648 >
+   /etc/modprobe.d/zfs.conf` (and the same number in
+   `/sys/module/zfs/parameters/zfs_arc_max` to apply it now). On a host
+   that is itself a VM, give it fixed RAM, no ballooning.
 2. **Cloud Hypervisor** (v54 or later): from its
    [release](https://github.com/cloud-hypervisor/cloud-hypervisor/releases),
    `cloud-hypervisor-static` as `/usr/local/bin/cloud-hypervisor` and
@@ -528,6 +536,11 @@ Cloudflare, and nothing listens on the internet.
   any uptime monitor at it.
 - **Logs:** `journalctl -u boxed`, `journalctl -u boxe-front` and
   `journalctl -u boxe-vm-<name>` (the VM's console).
+- **RAM:** VMs are given the RAM they ask for, as the host has it, up to
+  `-max-host-mem`. Setting it above the host's RAM lets more VMs stay
+  awake, since most use less than they have, but only with swap or zram on
+  the host (never swap on a zvol): without it, a host that runs out kills
+  the biggest VM, as a power cut. The VM boots again by itself.
 - **After a host reboot:** `boxed` starts every VM again. A VM that fails to
   start shows as `failed` in `ssh boxe ls`; `ssh boxe restart <name>` retries it.
 

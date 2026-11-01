@@ -276,6 +276,68 @@ func TestQuotaCountsAwakeVMs(t *testing.T) {
 	}
 }
 
+// The awake VMs of all members share the host's RAM: when it is full, a new
+// or waking VM puts to sleep someone's VM that nobody has used for a while,
+// never one in use, recently used or kept awake. Otherwise the host runs
+// out of memory and its OOM killer cuts the power of the biggest VM.
+func TestHostRAMIsShared(t *testing.T) {
+	c := newCLI(t, "alice", "bob")
+	b := c.box
+	b.limits = Limits{HostMem: 4096}
+	state := func(name string) string { return b.hv.State(name) }
+	unused := func(name string, d time.Duration) {
+		b.actMu.Lock()
+		b.activityOf(name, time.Now()).last = time.Now().Add(-d)
+		b.actMu.Unlock()
+	}
+	c.must("alice", "new a1 --mem 2G")
+	c.must("bob", "new b1 --mem 2G")
+	// Both were just used: no room.
+	if out, errOut, ok := c.run("alice", "new c1 --mem 1G"); ok || !strings.Contains(out+errOut, "RAM") {
+		t.Fatalf("new on a full host: %q %q", out, errOut)
+	}
+	// bob's VM has been unused for an hour: it makes room.
+	unused("b1", time.Hour)
+	c.must("alice", "new c1 --mem 1G")
+	if state("b1") != "sleeping" || state("a1") != "running" || state("c1") != "running" {
+		t.Fatalf("a1 %s, b1 %s, c1 %s", state("a1"), state("b1"), state("c1"))
+	}
+	// bob wakes it: alice's VMs are in use, kept awake or just used.
+	c.must("alice", "keep-awake a1 on")
+	unused("a1", time.Hour)
+	b.busy("c1", 1)
+	if out, errOut, ok := c.run("bob", "wake b1"); ok || !strings.Contains(out+errOut, "RAM") {
+		t.Fatalf("wake on a full host: %q %q", out, errOut)
+	}
+	b.busy("c1", -1)
+	unused("c1", 2*time.Minute)
+	if _, _, ok := c.run("bob", "wake b1"); ok {
+		t.Fatal("put to sleep a VM used 2 minutes ago")
+	}
+	unused("c1", time.Hour)
+	c.must("bob", "wake b1")
+	if state("b1") != "running" || state("a1") != "running" || state("c1") != "sleeping" {
+		t.Errorf("a1 %s, b1 %s, c1 %s", state("a1"), state("b1"), state("c1"))
+	}
+}
+
+// A copy never puts its source to sleep to make room: a fork pauses it.
+func TestCopyKeepsItsSourceAwake(t *testing.T) {
+	c := newCLI(t, "alice")
+	b := c.box
+	b.limits = Limits{HostMem: 3072}
+	c.must("alice", "new a1 --mem 2G")
+	b.actMu.Lock()
+	b.activityOf("a1", time.Now()).last = time.Now().Add(-time.Hour)
+	b.actMu.Unlock()
+	if _, _, ok := c.run("alice", "cp a1 a2"); ok {
+		t.Fatal("copied over the host's RAM")
+	}
+	if s := b.hv.State("a1"); s != "running" {
+		t.Errorf("source %s", s)
+	}
+}
+
 // The idle loop picks a VM, then waits for the lock; meanwhile a wake can
 // put that VM to sleep to make room, or someone can use it and leave.
 func TestIdleSleepRechecksUnderTheLock(t *testing.T) {

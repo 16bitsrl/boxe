@@ -464,10 +464,19 @@ func (b *Box) wake(user, name string) error {
 	return nil
 }
 
-// makeRoom puts v's owner's idle VMs to sleep, the longest unused first,
-// until v fits awake in their RAM quota. VMs in use or kept awake stay
-// awake. Called with b.mu held.
+// makeRoom makes room for v to wake up, in its owner's RAM quota and in
+// the host's RAM. Called with b.mu held.
 func (b *Box) makeRoom(v VM) error {
+	if err := b.makeUserRoom(v); err != nil {
+		return err
+	}
+	return b.makeHostRoom(v, "")
+}
+
+// makeUserRoom puts v's owner's idle VMs to sleep, the longest unused
+// first, until v fits awake in their RAM quota. VMs in use or kept awake
+// stay awake. Called with b.mu held.
+func (b *Box) makeUserRoom(v VM) error {
 	if b.limits.UserMem == 0 {
 		return nil
 	}
@@ -516,6 +525,67 @@ func (b *Box) makeRoom(v VM) error {
 	if awake > b.limits.UserMem {
 		return fmt.Errorf("%s does not fit in your %dG of RAM next to your other awake VMs, which are in use or kept awake: put one to sleep (ssh %s sleep <name>) or delete one",
 			v.Name, b.limits.UserMem/1024, b.name)
+	}
+	return nil
+}
+
+// roomIdle is how long a VM must have been unused before someone else's
+// VM may put it to sleep to make room in the host's RAM. Doing work (an
+// agent, a build) counts as use.
+const roomIdle = 5 * time.Minute
+
+// makeHostRoom puts awake VMs to sleep, anyone's, the longest unused
+// first, until v fits awake in the host's RAM. Only VMs with no
+// connection, unused for roomIdle and not kept awake; never keep (the
+// source of a copy). Called with b.mu held.
+func (b *Box) makeHostRoom(v VM, keep string) error {
+	if b.limits.HostMem == 0 {
+		return nil
+	}
+	vms, err := b.store.List("")
+	if err != nil {
+		return err
+	}
+	awake, _ := memMiB(v.Mem)
+	var idle []VM
+	last := map[string]time.Time{}
+	now := time.Now()
+	synced := b.syncFront(now)
+	b.actMu.Lock()
+	for _, o := range vms {
+		if o.Name == v.Name || b.hv.Sleeping(o.Name) {
+			continue
+		}
+		m, _ := memMiB(o.Mem)
+		awake += m
+		a := b.act[o.Name]
+		if a != nil && a.conns+a.front == 0 && now.Sub(a.last) >= roomIdle &&
+			o.Name != keep && !o.KeepAwake && b.hv.SleepDir != "" && synced {
+			last[o.Name] = a.last
+			idle = append(idle, o)
+		}
+	}
+	b.actMu.Unlock()
+	sort.SliceStable(idle, func(i, j int) bool { return last[idle[i].Name].Before(last[idle[j].Name]) })
+	for _, o := range idle {
+		if awake <= b.limits.HostMem {
+			break
+		}
+		if b.hv.State(o.Name) != "running" {
+			continue
+		}
+		if err := b.sleep(o, b.schedule(o, time.Second), now); err != nil {
+			log.Printf("%s: sleep %s: %v", o.Owner, o.Name, err)
+			continue
+		}
+		log.Printf("%s: %s went to sleep to make room in the host's RAM for %s", o.Owner, o.Name, v.Name)
+		m, _ := memMiB(o.Mem)
+		awake -= m
+	}
+	if awake > b.limits.HostMem {
+		log.Printf("no room in the host's RAM for %s (%s): %dM awake, at most %dM", v.Name, v.Mem, awake, b.limits.HostMem)
+		return fmt.Errorf("the host has no RAM left for %s: the other awake VMs are in use; try again in a few minutes, put one of yours to sleep (ssh %s sleep <name>) or use less --mem",
+			v.Name, b.name)
 	}
 	return nil
 }
