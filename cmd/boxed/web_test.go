@@ -533,6 +533,21 @@ func TestWebRevokeUser(t *testing.T) {
 	}
 }
 
+// The admin may type the email otherwise than the IdP writes it: emails
+// do not care about case, and someone who left must not keep their access.
+func TestWebRevokeIgnoresCase(t *testing.T) {
+	wt := newWebTest(t)
+	b := wt.browser("member")
+	b.get("https://test.boxe.example/", nil)
+	time.Sleep(2 * time.Millisecond)
+	if err := wt.web.store.Logout("Alice@Example.COM", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if res := b.do("https://test.boxe.example/", nil); res.StatusCode != http.StatusFound {
+		t.Errorf("after revoke: %d, want a redirect to login", res.StatusCode)
+	}
+}
+
 // Sessions end a fixed time after the login at the IdP: a VM host opened
 // later does not get a session that outlives it.
 func TestWebSessionsEndAfterLogin(t *testing.T) {

@@ -363,20 +363,20 @@ func (s *Store) CachedKeys(user string, maxAge time.Duration) (string, bool) {
 	return keys, err == nil && time.Since(t) < maxAge
 }
 
-// Logout ends every web session of email that started before t.
+// Logout ends every web session of email that started before t. Emails
+// are kept in lower case: the IdP and an admin may write them otherwise.
 func (s *Store) Logout(email string, t time.Time) error {
-	_, err := s.db.Exec("INSERT INTO web_logouts (email, at) VALUES (?, ?) ON CONFLICT(email) DO UPDATE SET at = excluded.at", email, t.UnixMilli())
+	_, err := s.db.Exec("INSERT INTO web_logouts (email, at) VALUES (?, ?) ON CONFLICT(email) DO UPDATE SET at = excluded.at",
+		strings.ToLower(email), t.UnixMilli())
 	return err
 }
 
 // LogoutAt is when email last logged out, in Unix milliseconds; 0 if never.
+// Whatever the case of the email (older versions kept it as written).
 func (s *Store) LogoutAt(email string) (int64, error) {
-	var at int64
-	err := s.db.QueryRow("SELECT at FROM web_logouts WHERE email = ?", email).Scan(&at)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
-	}
-	return at, err
+	var at sql.NullInt64
+	err := s.db.QueryRow("SELECT MAX(at) FROM web_logouts WHERE email = ? COLLATE NOCASE", email).Scan(&at)
+	return at.Int64, err
 }
 
 // Token is an API token of a member, without the token itself.
