@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -56,7 +58,7 @@ func (h *Hypervisor) Sleep(v VM) error {
 		h.forgetSleep(v.Name)
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(h.sleepDir(v.Name), sleepDone), nil, 0o600); err != nil {
+	if err := markSaved(h.sleepDir(v.Name)); err != nil {
 		h.chRemote(v.Name, "resume")
 		h.forgetSleep(v.Name)
 		return err
@@ -133,11 +135,34 @@ func (h *Hypervisor) forgetSleep(name string) error {
 	return nil
 }
 
+// A VM's sleep directory is its hypervisor's to write, and the hypervisor
+// is what a VM could break out to: boxed, as root, follows no link left
+// there and writes only into files it expects.
+
+// markSaved marks the snapshot in dir complete: a file of its own, never
+// one that is there already.
+func markSaved(dir string) error {
+	f, err := os.OpenFile(filepath.Join(dir, sleepDone), os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
 // retarget points the snapshot of v at its devices as they are now: the
 // zvol may have another /dev/zdN after a host reboot.
 func (h *Hypervisor) retarget(v VM, disk string) error {
-	p := filepath.Join(h.sleepDir(v.Name), "config.json")
-	b, err := os.ReadFile(p)
+	// One open file, read and rewritten: the hypervisor writes it, so it
+	// must still be readable by the hypervisor, and a regular file.
+	f, err := os.OpenFile(filepath.Join(h.sleepDir(v.Name), "config.json"), os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s: the snapshot's configuration is not a file", v.Name)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 1<<20))
 	if err != nil {
 		return err
 	}
@@ -150,17 +175,27 @@ func (h *Hypervisor) retarget(v VM, disk string) error {
 	if len(disks) != 2 || len(nets) != 1 {
 		return fmt.Errorf("%s: unexpected devices in the snapshot", v.Name)
 	}
-	disks[0].(map[string]any)["path"] = disk
-	disks[1].(map[string]any)["path"] = h.config(v.Name)
-	nets[0].(map[string]any)["tap"] = tap(v)
-	nets[0].(map[string]any)["mac"] = v.MAC()
+	disk0, ok0 := disks[0].(map[string]any)
+	disk1, ok1 := disks[1].(map[string]any)
+	net0, ok2 := nets[0].(map[string]any)
+	if !ok0 || !ok1 || !ok2 {
+		return fmt.Errorf("%s: unexpected devices in the snapshot", v.Name)
+	}
+	disk0["path"] = disk
+	disk1["path"] = h.config(v.Name)
+	net0["tap"] = tap(v)
+	net0["mac"] = v.MAC()
 	if vs, ok := c["vsock"].(map[string]any); ok {
 		vs["socket"] = vsockPath(v.Name)
 	}
 	if b, err = json.Marshal(c); err != nil {
 		return err
 	}
-	return os.WriteFile(p, b, 0o600)
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	_, err = f.WriteAt(b, 0)
+	return err
 }
 
 // CPUUsage is the CPU time v's hypervisor has used, in ns; -1 if unknown.

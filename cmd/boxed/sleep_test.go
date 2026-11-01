@@ -634,3 +634,76 @@ func (f *fakeHost) ranAgent(cmd string) bool {
 	defer f.mu.Unlock()
 	return slices.Contains(f.agent, cmd)
 }
+
+// hostFile is a file of the host's that a hypervisor taken over points a
+// link at, from the directory where it saves its VM: what boxed writes
+// there as root must not reach it.
+func hostFile(t *testing.T, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "host-file")
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func unchanged(t *testing.T, p, want string) {
+	t.Helper()
+	if b, err := os.ReadFile(p); err != nil || string(b) != want {
+		t.Errorf("boxed wrote to the host file through the hypervisor's link: %q, %v", b, err)
+	}
+}
+
+// The hypervisor writes the sleep directory: boxed, as root, does not
+// follow a link it left there when it marks the snapshot complete.
+func TestSleepDoesNotFollowTheHypervisorsLinks(t *testing.T) {
+	h, f := newFakeHypervisor(t)
+	v := runningVM(t, h, "test")
+	target := hostFile(t, "root:x:0:0")
+	f.onSave = func(dir string) { os.Symlink(target, filepath.Join(dir, sleepDone)) }
+	h.Sleep(v)
+	unchanged(t, target, "root:x:0:0")
+}
+
+// Nor when it points the snapshot at the VM's devices on waking.
+func TestWakeDoesNotFollowTheHypervisorsLinks(t *testing.T) {
+	h, f := newFakeHypervisor(t)
+	v := runningVM(t, h, "test")
+	config := `{"disks":[{"path":"a"},{"path":"b"}],"net":[{"tap":"t"}]}`
+	target := hostFile(t, config)
+	f.onSave = func(dir string) {
+		p := filepath.Join(dir, "config.json")
+		os.Remove(p)
+		os.Symlink(target, p)
+	}
+	if err := h.Sleep(v); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Wake(v); err == nil {
+		t.Error("woke up from a snapshot whose configuration is a link")
+	}
+	unchanged(t, target, config)
+}
+
+// A snapshot not as Cloud Hypervisor writes it is refused, without
+// bringing boxed down: it holds the lock of every VM meanwhile.
+func TestWakeRefusesAStrangeSnapshot(t *testing.T) {
+	for _, config := range []string{`{"disks":[1,2],"net":[3]}`, `{"disks":[{},{}],"net":[{}],"vsock":7}`, `[]`} {
+		h, f := newFakeHypervisor(t)
+		v := runningVM(t, h, "test")
+		f.onSave = func(dir string) { os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o600) }
+		if err := h.Sleep(v); err != nil {
+			t.Fatal(err)
+		}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s: panic: %v", config, r)
+				}
+			}()
+			if err := h.Wake(v); err == nil && config != `{"disks":[{},{}],"net":[{}],"vsock":7}` {
+				t.Errorf("%s: woke up", config)
+			}
+		}()
+	}
+}

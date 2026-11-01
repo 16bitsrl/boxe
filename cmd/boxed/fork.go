@@ -150,7 +150,7 @@ func (h *Hypervisor) forkFrom(src, v VM, snap, authorizedKeys string) error {
 			return err
 		}
 	}
-	if err := os.WriteFile(filepath.Join(dir, sleepDone), nil, 0o600); err != nil {
+	if err := markSaved(dir); err != nil {
 		return err
 	}
 	if err := h.Wake(v); err != nil {

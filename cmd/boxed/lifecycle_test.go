@@ -42,6 +42,7 @@ type fakeHost struct {
 	onSSH     func()                           // runs once, when something next waits for a VM's sshd
 	journal   map[string]string                // unit -> what its process printed, as journalctl shows it
 	inVM      func(cmd string) ([]byte, error) // runs the other commands sent to a VM over SSH
+	onSave    func(dir string)                 // runs after the hypervisor saved a VM in dir, as a hypervisor taken over could
 }
 
 // dial connects to a VM: every sshd answers at once, and boxe-agent behind
@@ -217,6 +218,9 @@ func (f *fakeHost) exec(_ time.Duration, name string, args ...string) ([]byte, e
 			os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"cpus":{"boot_vcpus":2},`+
 				`"disks":[{"id":"_disk0","path":"/dev/zd0"},{"id":"_disk1","path":"/old/config.tar","readonly":true}],`+
 				`"net":[{"id":"_net2","tap":"tap99","mac":"02:42:0a:2a:00:63"}],"vsock":{"cid":3,"socket":"/old.vsock"}}`), 0o600)
+			if f.onSave != nil {
+				f.onSave(dir)
+			}
 		case "shutdown-vmm":
 			delete(f.running, u)
 		case "info":

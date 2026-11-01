@@ -173,3 +173,14 @@ func TestForkWaitsForAClearConnection(t *testing.T) {
 		t.Errorf("reconfigured %d times", got)
 	}
 }
+
+// The source's hypervisor writes what the copy is restored from: boxed
+// does not follow a link it left there.
+func TestForkDoesNotFollowTheHypervisorsLinks(t *testing.T) {
+	h, f := newFakeHypervisor(t)
+	src := runningVM(t, h, "src")
+	target := hostFile(t, "root:x:0:0")
+	f.onSave = func(dir string) { os.Symlink(target, filepath.Join(dir, sleepDone)) }
+	h.Fork(src, VM{Name: "copy", Index: 3, CPUs: 1, Mem: "1G"}, "")
+	unchanged(t, target, "root:x:0:0")
+}
