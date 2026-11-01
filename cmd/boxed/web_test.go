@@ -18,8 +18,11 @@ import (
 
 const testOrg = "org-team"
 
-// testEmails are the members the fake IdP logs in by code, besides alice.
-var testEmails = map[string]string{"bob": "bob@example.com", "admin": "dave@example.com", "stranger": "stranger@example.com"}
+// testEmails are the members the fake IdP logs in by code, besides alice;
+// code "unverified" logs in a user of the team's organization who typed
+// the admin's email in their profile, never confirmed.
+var testEmails = map[string]string{"bob": "bob@example.com", "admin": "dave@example.com", "stranger": "stranger@example.com",
+	"unverified": "dave@example.com"}
 
 // fakeIdP stands in for Zitadel: code "member" logs in a team member,
 // alice, code "outsider" a user of another organization, and the codes in
@@ -67,7 +70,7 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		}
 		json.NewEncoder(w).Encode(map[string]any{
 			"email":                                 email,
-			"email_verified":                        true,
+			"email_verified":                        r.Header.Get("Authorization") != "Bearer tok-unverified",
 			"urn:zitadel:iam:user:resourceowner:id": org,
 		})
 	})
@@ -560,6 +563,22 @@ func TestWebHealth(t *testing.T) {
 	res = wt.browser("x").do("https://boxe.example/healthz", nil)
 	if res.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body(res), "backup") {
 		t.Errorf("unhealthy: %d", res.StatusCode)
+	}
+}
+
+// Who logs in is known by their email: the IdP must have verified it, also
+// within the organization, where anyone may type someone else's in their
+// profile and become them, admin included, in the panel and the agents.
+func TestWebRefusesUnverifiedEmails(t *testing.T) {
+	wt := newWebTest(t)
+	for _, org := range []string{testOrg, ""} {
+		wt.web.cfg.OrgID = org
+		wt.web.cfg.EmailDomains = []string{"example.com"}
+		wt.seen = nil
+		res := wt.browser("unverified").get("https://test.boxe.example/", nil)
+		if res.StatusCode != http.StatusForbidden || wt.seen != nil {
+			t.Errorf("organization %q: unverified email: %d, want 403", org, res.StatusCode)
+		}
 	}
 }
 

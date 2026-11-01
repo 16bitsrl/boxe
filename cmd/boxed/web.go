@@ -383,11 +383,15 @@ func (w *Web) callback(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !w.member(email, verified, org) {
-		log.Printf("web: login refused for %s (organization %s)", email, org)
+		log.Printf("web: login refused for %s (organization %s, email verified: %t)", email, org, verified)
+		msg := "You logged in as " + email + ", which is not part of the team. Log in with your team account."
+		if email != "" && !verified {
+			msg = "You logged in as " + email + ", but that email is not verified yet. Verify it in your account, then log in again."
+		}
 		// The IdP logs the same account in again unless asked to let the
 		// user pick another.
 		w.render(rw, http.StatusForbidden, "message", panelPage{Title: "Not part of the team",
-			Message: "You logged in as " + email + ", which is not part of the team. Log in with your team account.",
+			Message: msg,
 			Action:  panelLink{"Use another account", "/__boxe/login?" + url.Values{"r": {st.R}, "prompt": {"select_account"}}.Encode()}})
 		return
 	}
@@ -455,10 +459,12 @@ func (w *Web) userinfo(code string) (email string, verified bool, org string, er
 }
 
 // member says whether a login belongs to the team: by Zitadel organization
-// if one is set, otherwise by a verified email in an allowed domain.
-// With neither, nobody gets in.
+// if one is set, otherwise by an email in an allowed domain. With neither,
+// nobody gets in. The email must be verified either way: it says who the
+// user is (the panel, the agents, X-Box-Email), and anyone may type
+// someone else's in their profile.
 func (w *Web) member(email string, verified bool, org string) bool {
-	if email == "" {
+	if email == "" || !verified {
 		return false
 	}
 	if w.cfg.OrgID != "" {
@@ -466,7 +472,7 @@ func (w *Web) member(email string, verified bool, org string) bool {
 	}
 	_, domain, _ := strings.Cut(email, "@")
 	for _, d := range w.cfg.EmailDomains {
-		if verified && strings.EqualFold(domain, d) {
+		if strings.EqualFold(domain, d) {
 			return true
 		}
 	}
