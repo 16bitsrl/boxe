@@ -177,3 +177,11 @@ func TestSplitTerminal(t *testing.T) {
 		t.Errorf("after the shell exits: %v", err)
 	}
 }
+
+// The session starts from a login shell: what /etc/profile.d sets (the LLM
+// gateway) is there, as over SSH.
+func TestTermCommandIsALoginShell(t *testing.T) {
+	if got := termCommand("work"); !strings.Contains(got, "bash -lc 'exec scroll work'") || !strings.Contains(got, "exec bash -l;") {
+		t.Errorf("%q", got)
+	}
+}

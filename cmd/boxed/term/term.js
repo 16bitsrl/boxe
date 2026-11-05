@@ -44,6 +44,14 @@ term.onData((d) => {
   }
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(enc.encode(d));
 });
+// Text inserted without a key the terminal handled (Android keyboards,
+// dictation, autocorrect) arrives only as beforeinput, which ghostty-web
+// drops: pass it on.
+const el = document.getElementById("term");
+el.addEventListener("beforeinput", (e) => {
+  if (e.isComposing || !e.data || !/^insert(Text|ReplacementText)$/.test(e.inputType)) return;
+  if (!ended && ws && ws.readyState === WebSocket.OPEN) ws.send(enc.encode(e.data));
+});
 term.onResize(({ cols, rows }) => {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resize", cols, rows }));
 });

@@ -291,9 +291,10 @@ func (t *sshTerm) Close() error {
 }
 
 // termCommand attaches to the scroll session, or starts a login shell in
-// VMs made before scroll was in the image.
+// VMs made before scroll was in the image. Through a login shell, so the
+// session has what /etc/profile.d sets (the LLM gateway, the PATH).
 func termCommand(session string) string {
-	return "if command -v scroll >/dev/null; then exec scroll " + session + "; else exec bash -l; fi"
+	return "if command -v scroll >/dev/null; then exec bash -lc 'exec scroll " + session + "'; else exec bash -l; fi"
 }
 
 // openShell is Web.shell: a pty in v, trusting only v's own host key (a VM
