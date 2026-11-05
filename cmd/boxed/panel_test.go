@@ -756,3 +756,81 @@ func TestPanelShowsItsCommands(t *testing.T) {
 		t.Errorf("admin restart: ran %q", got)
 	}
 }
+
+// The list, the page of a VM and the host page mark what panel.js refreshes
+// by reading the page again: the state and the usage of the VMs the member
+// may see, the host's numbers; on the page of a VM, the charts of the last
+// hour only. The page itself decides who sees what, as without JavaScript.
+func TestPanelLiveRegions(t *testing.T) {
+	pt := newPanelTest(t)
+	pt.c.box.store.AddSample("test", Sample{At: time.Now().Add(-5 * time.Minute), CPU: 30, Mem: 500 << 20, Disk: 1 << 30})
+	member, admin := pt.browser("member"), pt.browser("admin")
+	_, page := member.page("/")
+	for _, want := range []string{`data-poll="10"`, `data-live="state-test"`, `data-live="cpu-test"`, `data-live="ram-nap"`, `data-live="disk-nap"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("list: no %q in:\n%s", want, page)
+		}
+	}
+	if strings.Contains(page, "bobs-vm") {
+		t.Errorf("alice's list has bob's VM")
+	}
+	if _, page := admin.page("/"); !strings.Contains(page, `data-live="state-bobs-vm"`) {
+		t.Errorf("the admin's list does not refresh bob's VM:\n%s", page)
+	}
+
+	_, page = member.page("/vm/test")
+	for _, want := range []string{`data-poll="10"`, `data-live="state"`, `data-live="usage-now"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("vm: no %q in:\n%s", want, page)
+		}
+	}
+	if strings.Contains(page, `data-live="charts"`) {
+		t.Errorf("the 24h charts refresh")
+	}
+	_, page = member.page("/vm/test?range=1h")
+	if !strings.Contains(page, `data-live="charts"`) || !strings.Contains(page, `href="/vm/test?range=1h" aria-current="page"`) {
+		t.Errorf("1h charts do not refresh:\n%s", page)
+	}
+	if code, page := member.page("/vm/bobs-vm?range=1h"); code != 404 || strings.Contains(page, "data-live") {
+		t.Errorf("bob's VM for alice: %d", code)
+	}
+	if code, page := admin.page("/vm/bobs-vm?range=1h"); code != 200 || !strings.Contains(page, `data-live="state"`) {
+		t.Errorf("bob's VM for the admin: %d", code)
+	}
+
+	_, page = admin.page("/host")
+	for _, want := range []string{`data-poll="10"`, `data-live="host-status"`, `data-live="host-facts"`, `data-live="host-members"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("host: no %q in:\n%s", want, page)
+		}
+	}
+	// Forms are never swapped: what the member types stays.
+	for _, path := range []string{"/", "/vm/test", "/vm/test?range=1h"} {
+		_, page := member.page(path)
+		for _, region := range regexp.MustCompile(`(?s)data-live="[^"]*".*?</`).FindAllString(page, -1) {
+			if strings.Contains(region, "<form") || strings.Contains(region, "<input") {
+				t.Errorf("%s: a form in a live region: %s", path, region)
+			}
+		}
+	}
+}
+
+// The console can follow what the VM prints, by reading the page again: for
+// whoever may read it, its owner and an admin, not a member with access.
+func TestPanelConsoleFollow(t *testing.T) {
+	pt := newPanelTest(t)
+	pt.c.host.journal = map[string]string{unit("test"): "booted\n"}
+	pt.c.must("alice", "access test add bob")
+	for who, want := range map[string]int{"member": 200, "admin": 200, "bob": 404} {
+		code, page := pt.browser(who).page("/vm/test/console")
+		if code != want {
+			t.Errorf("%s: %d", who, code)
+		}
+		if live := strings.Contains(page, `data-live="console"`) || strings.Contains(page, "data-follow"); live != (want == 200) {
+			t.Errorf("%s: follow offered %v:\n%s", who, live, page)
+		}
+	}
+	if code, page := pt.browser("member").page("/vm/bobs-vm/console"); code != 404 || strings.Contains(page, "data-follow") {
+		t.Errorf("bob's console for alice: %d", code)
+	}
+}

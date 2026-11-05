@@ -9,19 +9,26 @@ import (
 )
 
 // The charts on the page of a VM: CPU, RAM and disk over a range, from the
-// samples of every minute (see Box.sample), averaged into usageBuckets
-// points. The panel draws them as SVG; panel.js adds the readout on hover.
+// samples of every minute (see Box.sample), averaged into the points of
+// usageBuckets. The panel draws them as SVG; panel.js adds the readout on
+// hover, and reads the last hour again every 10 seconds.
 
-var usageRanges = map[string]time.Duration{"24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour}
+var usageRanges = map[string]time.Duration{"1h": time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour}
 
-// usageBuckets is how many points a chart has: one every 10 minutes over 24h.
-const usageBuckets = 144
+// usageBuckets is how many points a chart of a range has: one a minute over
+// the last hour, the samples themselves; one every 10 minutes over 24h.
+func usageBuckets(rng string) int {
+	if rng == "1h" {
+		return 60
+	}
+	return 144
+}
 
 // chartW and chartH are the box the paths are drawn in, stretched to the plot.
 const chartW, chartH = 1000, 100
 
 type usage struct {
-	Range  string   // 24h, 7d or 30d
+	Range  string   // 1h, 24h, 7d or 30d
 	Ranges []string // to choose from
 	From   string   // the start of the range, as the axis shows it
 	Times  string   // the middle of each bucket, Unix seconds, for panel.js
@@ -43,19 +50,20 @@ func usageOf(v vmJSON, samples []Sample, rng string, now time.Time) usage {
 	if !ok {
 		rng, span = "24h", usageRanges["24h"]
 	}
-	u := usage{Range: rng, Ranges: []string{"24h", "7d", "30d"}}
+	u := usage{Range: rng, Ranges: []string{"1h", "24h", "7d", "30d"}}
 	start := now.Add(-span)
-	if rng == "24h" {
+	if span <= 24*time.Hour {
 		u.From = start.Local().Format("15:04")
 	} else {
 		u.From = start.Local().Format("Jan 2")
 	}
-	var sum [3][usageBuckets]float64
-	var n [usageBuckets]int
+	buckets := usageBuckets(rng)
+	sum := [3][]float64{make([]float64, buckets), make([]float64, buckets), make([]float64, buckets)}
+	n := make([]int, buckets)
 	found := false
 	for _, s := range samples {
-		i := int(float64(s.At.Sub(start)) / float64(span) * usageBuckets)
-		if i < 0 || i >= usageBuckets {
+		i := int(float64(s.At.Sub(start)) / float64(span) * float64(buckets))
+		if i < 0 || i >= buckets {
 			continue
 		}
 		sum[0][i] += s.CPU
@@ -67,9 +75,9 @@ func usageOf(v vmJSON, samples []Sample, rng string, now time.Time) usage {
 	if !found {
 		return u
 	}
-	times := make([]string, usageBuckets)
+	times := make([]string, buckets)
 	for i := range times {
-		mid := start.Add(time.Duration((float64(i) + 0.5) / usageBuckets * float64(span)))
+		mid := start.Add(time.Duration((float64(i) + 0.5) / float64(buckets) * float64(span)))
 		times[i] = strconv.FormatInt(mid.Unix(), 10)
 	}
 	u.Times = strings.Join(times, ",")
@@ -90,8 +98,8 @@ func usageOf(v vmJSON, samples []Sample, rng string, now time.Time) usage {
 		{"RAM", bytes, ram, niceBytes},
 		{"Disk", bytes, 0, niceBytes},
 	} {
-		var vals [usageBuckets]float64
-		values := make([]string, usageBuckets)
+		vals := make([]float64, buckets)
+		values := make([]string, buckets)
 		peak, total, count := 0.0, 0.0, 0
 		for i := range vals {
 			if n[i] == 0 {
@@ -110,7 +118,7 @@ func usageOf(v vmJSON, samples []Sample, rng string, now time.Time) usage {
 		if top <= 0 {
 			top = 1
 		}
-		line, area, dots := paths(vals[:], n[:], top)
+		line, area, dots := paths(vals, n, top)
 		u.Charts = append(u.Charts, usageChart{Title: c.title, Top: c.format(top), Peak: c.format(peak),
 			Avg: c.format(total / float64(count)), Line: line, Area: area, Dots: dots, Values: strings.Join(values, "|")})
 	}
