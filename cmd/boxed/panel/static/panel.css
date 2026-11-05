@@ -185,5 +185,14 @@ pre.console:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; 
   .vms .num { text-align: left; }
   .vms .num::before { content: attr(data-label) " "; color: var(--muted); }
   .vms .actions { grid-column: 1 / -1; text-align: left; }
+  /* The team has more columns than a VM: they wrap. */
+  .team tr { display: flex; flex-wrap: wrap; align-items: baseline; }
+  .team td.owner { flex-basis: 100%; }
+  /* Two lists of facts side by side become one: the same column of names. */
+  .cols > .facts { grid-template-columns: 7.5em 1fr; }
+  /* "Type <name> to confirm" on a line, the field under it. */
+  .manage label { flex: 1 1 100%; flex-wrap: wrap; }
+  .manage label code { white-space: nowrap; }
+  .manage label input:not([type=hidden]) { flex: 1 1 100%; width: auto; }
 }
 .bad { color: var(--red); }
