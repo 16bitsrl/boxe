@@ -74,6 +74,9 @@ button.primary:hover, .button.primary:hover { background: #3a3331; }
 .heading-actions { display: flex; align-items: stretch; flex-wrap: wrap; gap: 10px; }
 .heading-actions .cmd { margin: 0; }
 .heading-actions .button { display: flex; align-items: center; padding: 0 14px; font-size: 14px; }
+.follow { display: flex; align-items: center; gap: 6px; padding: 8px 0; font-weight: 600; font-size: 14px; cursor: pointer; }
+.follow[hidden] { display: none; }
+.follow input { margin: 0; accent-color: var(--red); }
 .form { display: grid; gap: 20px; max-width: 640px; }
 .form .error { margin: 0; }
 .field label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 14px; }

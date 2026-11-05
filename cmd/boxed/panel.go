@@ -25,8 +25,9 @@ import (
 // admin, which they can restart and delete; members make new VMs and copy
 // theirs. Every action shows the command that does it over SSH, and runs
 // exactly that command: the panel can do nothing ssh boxe cannot.
-// Pages are server-rendered; panel.js only adds the copy buttons and keeps
-// the commands of forms up to date. VM pages are on the same site and
+// Pages are server-rendered; panel.js only adds the copy buttons, keeps the
+// commands of forms up to date, and refreshes the data-live parts of a page
+// by reading the same page again, so it sees what the page would show. VM pages are on the same site and
 // untrusted, hence the headers in panelHeaders, no state change on a GET, and
 // the origin check and the session's token on every form (act).
 

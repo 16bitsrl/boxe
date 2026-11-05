@@ -1,5 +1,5 @@
 {{define "content"}}
-<div class="heading">
+<div class="heading" data-poll="10">
   <h1>{{if .Admin}}All VMs{{else}}Your VMs{{end}}</h1>
   <div class="heading-actions">
     <div class="cmd"><code><b>$</b> ssh {{.SSH}} new</code><button class="copy" data-copy="ssh {{.SSH}} new" hidden>Copy</button></div>
@@ -28,10 +28,10 @@
 <tr>
   <td><a class="name" href="/vm/{{.Name}}">{{.Name}}</a><span class="sub">{{.CPUs}} vCPU · {{.Mem}}{{if .Image}} · {{.Image}}{{end}}{{if and (not $.Admin) (ne .Owner $.User)}} · {{.Owner}}'s{{end}}</span></td>
   {{if $.Admin}}<td class="owner">{{.Owner}}</td>{{end}}
-  <td><span class="state is-{{.State}}">{{.State}}</span></td>
-  <td class="num" data-label="CPU">{{pct .CPUPercent}}</td>
-  <td class="num" data-label="RAM">{{size .MemUsed}}</td>
-  <td class="num" data-label="Disk">{{size .DiskUsed}}</td>
+  <td><span class="state is-{{.State}}" data-live="state-{{.Name}}">{{.State}}</span></td>
+  <td class="num" data-label="CPU" data-live="cpu-{{.Name}}">{{pct .CPUPercent}}</td>
+  <td class="num" data-label="RAM" data-live="ram-{{.Name}}">{{size .MemUsed}}</td>
+  <td class="num" data-label="Disk" data-live="disk-{{.Name}}">{{size .DiskUsed}}</td>
   <td class="actions">
     {{if .URL}}<a class="button small" href="{{.URL}}" target="_blank" rel="noopener">Open</a>{{end}}
     <button class="copy small" data-copy="ssh {{.SSH}}" hidden title="Copy ssh {{.SSH}}">Copy SSH</button>

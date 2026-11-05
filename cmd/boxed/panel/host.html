@@ -1,14 +1,14 @@
 {{define "content"}}
 {{with .Host}}
-<h1>Host</h1>
-<div class="card{{if .Problems}} note{{end}}">
+<h1 data-poll="10">Host</h1>
+<div class="card{{if .Problems}} note{{end}}" data-live="host-status">
   {{if .Problems}}<p><b>Needs attention:</b></p>
   <ul class="problems">{{range .Problems}}<li>{{.}}</li>{{end}}</ul>
   {{else}}<p>Everything is fine.</p>{{end}}
 </div>
 <div class="card spaced">
   <div class="cols">
-    <dl class="facts">
+    <dl class="facts" data-live="host-facts">
       <dt>CPU</dt><dd>{{.CPUs}} cores{{if .Load}}, load {{.Load}}{{end}}</dd>
       <dt>RAM</dt><dd>{{size .MemTotal}}, {{size .MemFree}} available</dd>
       <dt>Awake VMs</dt><dd>{{if .MemVMs}}{{size .MemVMs}} of RAM{{else}}none{{end}}</dd>
@@ -24,7 +24,7 @@
 <div class="card">
 <table class="vms">
   <thead><tr><th>GitHub</th><th>Email</th><th>Role</th><th class="num">Keys</th><th class="num">VMs</th><th class="num">Awake RAM</th></tr></thead>
-  <tbody>
+  <tbody data-live="host-members">
   {{range .Members}}
   <tr>
     <td class="owner">{{.User}}</td>
@@ -41,7 +41,7 @@
 <p class="hint">The team is the users file on the host; keys come from GitHub every 10 minutes.</p>
 
 <h2>Backups</h2>
-<div class="card">
+<div class="card" data-live="host-backups">
   {{if not .Backups}}<p>Backups are off: there is no backup configuration on the host.</p>
   {{else}}
   <dl class="facts">
