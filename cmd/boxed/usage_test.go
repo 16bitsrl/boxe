@@ -79,3 +79,24 @@ func TestUsageIsSampled(t *testing.T) {
 		t.Errorf("samples of a deleted VM: %+v", got)
 	}
 }
+
+// The 1h range has a point per minute, straight from the samples.
+func TestUsageLastHour(t *testing.T) {
+	now := time.Now()
+	v := vmJSON{CPUs: 2, Mem: "2G"}
+	u := usageOf(v, []Sample{
+		{At: now.Add(-90 * time.Minute), CPU: 190},
+		{At: now.Add(-30*time.Minute - 10*time.Second), CPU: 20},
+		{At: now.Add(-29*time.Minute - 10*time.Second), CPU: 40},
+	}, "1h", now)
+	if u.Range != "1h" || u.Ranges[0] != "1h" || u.From != now.Add(-time.Hour).Local().Format("15:04") {
+		t.Errorf("%+v", u)
+	}
+	if n := len(strings.Split(u.Times, ",")); n != 60 {
+		t.Errorf("%d points", n)
+	}
+	cpu := strings.Split(u.Charts[0].Values, "|")
+	if len(cpu) != 60 || cpu[29] != "20%" || cpu[30] != "40%" || u.Charts[0].Peak != "40%" {
+		t.Errorf("CPU: %q, peak %s", cpu, u.Charts[0].Peak)
+	}
+}
