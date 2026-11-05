@@ -189,7 +189,7 @@ pre.console:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; 
   .team tr { display: flex; flex-wrap: wrap; align-items: baseline; }
   .team td.owner { flex-basis: 100%; }
   /* Two lists of facts side by side become one: the same column of names. */
-  .cols > .facts { grid-template-columns: 7.5em 1fr; }
+  .cols > .facts { grid-template-columns: 6.5em 1fr; }
   /* "Type <name> to confirm" on a line, the field under it. */
   .manage label { flex: 1 1 100%; flex-wrap: wrap; }
   .manage label code { white-space: nowrap; }
