@@ -1,7 +1,14 @@
 # boxeuntu, the base image of the microVMs: exeuntu (exe.dev, Apache 2.0) plus a layer of ours.
-# Build: docker build -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>
+# Build: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxeuntu ./cmd/boxeuntu && docker build -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>
 # Pinned: a rebuild must not change what VMs get. To update: pull, read what changed, change the digest.
 FROM ghcr.io/boldsoftware/exeuntu@sha256:74db1d70f105846ab63a17aeca503f82309f565ead347ffccd3201ffd047ca36
+
+# exeuntu's user is exedev: ours is boxedev, same UID and permissions.
+# exeuntu works in /home/exedev, and docker would make it again at every step.
+WORKDIR /
+COPY boxe-rename-user.sh /tmp/rename-user.sh
+RUN bash /tmp/rename-user.sh && rm /tmp/rename-user.sh
+WORKDIR /home/boxedev
 
 # PID 1: applies the configuration disk from the host, then starts init.
 COPY boxe-config.sh /usr/local/lib/boxe/config.sh
@@ -30,7 +37,7 @@ ADD --checksum=sha256:0ae91dfc2ca214ff71f624c0b42a0eda2e6cf7361de2525be6f9a88aa8
 COPY shelley-socket.conf /etc/systemd/system/shelley.socket.d/boxe.conf
 COPY shelley-service.conf /etc/systemd/system/shelley.service.d/boxe.conf
 RUN chmod 755 /usr/local/bin/shelley && \
-    install -d -o 1000 -g 1000 /home/exedev/.config/shelley && \
+    install -d -o 1000 -g 1000 /home/boxedev/.config/shelley && \
     systemctl enable shelley.socket
 # exe-scroll (MIT, by exe.dev): terminal sessions that survive a dropped
 # connection, with scrollback; `scroll [name]` attaches or starts one.
@@ -64,12 +71,26 @@ RUN rm -f /etc/systemd/system/systemd-udevd.service /etc/systemd/system/systemd-
         /etc/systemd/system/systemd-udev-settle.service
 # exeuntu's welcome talks about exe.dev and its services: use ours.
 COPY boxe-welcome.sh /etc/profile.d/boxe-welcome.sh
-RUN sed -i '/^# Print exe.dev message/,$d' /home/exedev/.bashrc && \
-    usermod -c "boxe user" exedev
+RUN sed -i '/^# Print exe.dev message/,$d' /home/boxedev/.bashrc && \
+    usermod -c "boxe user" boxedev
+# The coding agents: boxeuntu (ours, forked from exeuntu's CLI) updates them
+# and sets them up for the boxe gateway, at boot and when the owner's keys
+# change. Out: what exeuntu has for exe.dev's own services (its CLI, the
+# OpenCode and pi plugins for its gateway, the unit for its setup scripts).
+COPY boxeuntu /usr/local/bin/boxeuntu
+COPY boxe-agents.service /etc/systemd/system/boxe-agents.service
+RUN chmod 755 /usr/local/bin/boxeuntu && \
+    systemctl disable exe-setup.service && \
+    rm -rf /usr/local/bin/exeuntu /etc/opencode/plugins /home/boxedev/.pi/agent/extensions/exe-dev \
+        /etc/systemd/system/exe-setup.service && \
+    systemctl enable boxe-agents.service
 # Instructions for the coding agents in the image (Claude, Codex, opencode,
 # Shelley): exeuntu's describe exe.dev. boxed writes ours, with this
 # installation's addresses, through the configuration disk.
-RUN install -d -o 1000 -g 1000 /home/exedev/.config/boxe
+RUN install -d -o 1000 -g 1000 /home/boxedev/.config/boxe
 RUN for f in .config/shelley/AGENTS.md .claude/CLAUDE.md .codex/AGENTS.md .config/opencode/AGENTS.md; do \
-        ln -sfn /home/exedev/.config/boxe/AGENTS.md /home/exedev/$f; \
+        ln -sfn /home/boxedev/.config/boxe/AGENTS.md /home/boxedev/$f; \
     done
+# Nothing may still name exeuntu's user, nor be left of exe.dev's services.
+RUN [ ! -e /home/exedev ] && [ ! -e /exe.dev ] && ! ls /etc/systemd/system/*/exe-* 2>/dev/null && ! grep -rlwI exedev /etc /home /usr/local/lib/boxe /var/lib/systemd /var/spool 2>/dev/null && \
+    ! find / -xdev -lname '*/home/exedev*' 2>/dev/null | grep -q .

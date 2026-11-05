@@ -21,7 +21,7 @@ boxe_apply_config() {
     [[ -b $boxe_cfg ]] || { echo "no configuration disk" >&2; return 1; }
     id=$(boxe_config_id) || return 1
     [[ $id != "$(cat /etc/boxe/id 2>/dev/null)" ]] || return 2
-    for f in etc/hostname etc/machine-id etc/ssh/ssh_host_ed25519_key home/exedev/.ssh/authorized_keys; do
+    for f in etc/hostname etc/machine-id etc/ssh/ssh_host_ed25519_key home/boxedev/.ssh/authorized_keys; do
         tar -tf "$boxe_cfg" "$f" >/dev/null 2>&1 || { echo "configuration without $f" >&2; return 1; }
     done
     rm -f /etc/ssh/ssh_host_*

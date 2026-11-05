@@ -214,12 +214,12 @@ func TestGatewayAddsTheOwnersKey(t *testing.T) {
 		t.Fatalf("usage: %+v", usage)
 	}
 	u := usage[0]
-	// Claude Sonnet 5.5: $2 in, $10 out, $0.20 cache reads per million.
+	// Claude Sonnet 5.5: $2 in, $10 out, $0.10 cache reads per million.
 	if u.VM != "test" || u.Model != "claude-sonnet-5-5" || u.Requests != 1 || u.Input != 1000 || u.Output != 200 ||
-		u.CacheRead != 5000 || u.CostUSD == nil || *u.CostUSD < 0.00499 || *u.CostUSD > 0.00501 {
+		u.CacheRead != 5000 || u.CostUSD == nil || *u.CostUSD < 0.00449 || *u.CostUSD > 0.00451 {
 		t.Errorf("usage: %+v", u)
 	}
-	if out := c.must("alice", "llm usage"); !strings.Contains(out, "test") || !strings.Contains(out, "claude-sonnet-5-5") || !strings.Contains(out, "$0.0050") {
+	if out := c.must("alice", "llm usage"); !strings.Contains(out, "test") || !strings.Contains(out, "claude-sonnet-5-5") || !strings.Contains(out, "$0.0045") {
 		t.Errorf("llm usage:\n%s", out)
 	}
 	c.json("bob", "llm usage --json", &usage)
@@ -321,6 +321,13 @@ func TestGatewaySetup(t *testing.T) {
 	if c.host.ranIn("other", "systemctl try-restart shelley") {
 		t.Error("Shelley restarted in bob's VM")
 	}
+	// Codex, OpenCode and pi get config files for the providers with a key.
+	if !c.host.ranIn("test", "boxeuntu configure") {
+		t.Error("agents not set up after the first key")
+	}
+	if c.host.ranIn("other", "boxeuntu configure") {
+		t.Error("agents set up in bob's VM")
+	}
 }
 
 // New VMs and copies get what makes their shells and Shelley use the gateway.
@@ -333,7 +340,10 @@ func TestConfigArchiveSetsUpTheGateway(t *testing.T) {
 	if s := files["etc/systemd/system/shelley.service.d/llm.conf"]; !strings.Contains(s, "http://10.42.0.1:2998/shelley.json") || !strings.Contains(s, "-config ") {
 		t.Errorf("Shelley: %q", s)
 	}
-	if !strings.Contains(files["home/exedev/.config/boxe/AGENTS.md"], "ssh boxe llm set") {
+	if files["etc/boxe/llm-gateway"] != "http://10.42.0.1:2998\n" {
+		t.Errorf("llm-gateway: %q", files["etc/boxe/llm-gateway"])
+	}
+	if !strings.Contains(files["home/boxedev/.config/boxe/AGENTS.md"], "ssh boxe llm set") {
 		t.Error("AGENTS.md does not tell about the keys")
 	}
 	c.box.hv.LLMGateway = ""
@@ -347,11 +357,18 @@ func TestPrices(t *testing.T) {
 		model string
 		known bool
 	}{{"claude-opus-5-5", true}, {"claude-sonnet-4-5-20250929", true}, {"gpt-5-mini-2025-08-07", true}, {"gpt-4o-mini", true}, {"some-new-model", false},
-		// Not priced like the model they start with.
-		{"o3-pro", false}, {"gpt-5-pro", false}, {"gpt-5.5", false}, {"claude-opus-5-5-fast", false}} {
+		{"gpt-6.1-sol", true}, {"gpt-6-luna", true}, {"gpt-5.6-terra", true}, {"gpt-5.5", true}, {"o3-pro", true}, {"gpt-5-pro", true},
+		{"claude-mythos-5-1", true}, {"gpt-6-astra-fast", false}, {"claude-opus-5-5-fast", false}} {
 		if _, ok := priceOf(c.model); ok != c.known {
 			t.Errorf("%s: known %v", c.model, ok)
 		}
+	}
+	// From the providers' price lists of 2026-11-05.
+	if p, _ := priceOf("gpt-6.1-sol"); p != (price{2, 10, 0.10, 0}) {
+		t.Errorf("gpt-6.1-sol: %+v", p)
+	}
+	if p, _ := priceOf("claude-sonnet-5-5"); p.CacheRead != 0.10 {
+		t.Errorf("claude-sonnet-5-5: %+v", p)
 	}
 	// The longest prefix wins: gpt-5-mini is not gpt-5.
 	mini, _ := priceOf("gpt-5-mini-2025-08-07")
@@ -731,5 +748,28 @@ func TestGatewayTrailingSlash(t *testing.T) {
 	}
 	if r, _ := anthropic.last(); r == nil || r.URL.Path != "/v1/models/" {
 		t.Errorf("upstream got %v", r)
+	}
+}
+
+// A VM asleep when its owner adds a key gets its agents set up when it
+// wakes: waking resumes its memory, the boot does not run again.
+func TestSleepingVMGetsTheAgentsSetUpWhenItWakes(t *testing.T) {
+	c, _, _ := llmCLI(t, "alice")
+	c.must("alice", "new test")
+	c.must("alice", "sleep test")
+	c.setKey("alice", "anthropic", "sk-ant-alice")
+	if c.host.ranIn("test", "boxeuntu configure") {
+		t.Fatal("ran in a sleeping VM")
+	}
+	if err := c.box.wake("alice", "test"); err != nil {
+		t.Fatal(err)
+	}
+	for end := time.Now().Add(3 * time.Second); !c.host.ranIn("test", "boxeuntu configure"); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("agents not set up after waking")
+		}
+	}
+	if !c.host.ranIn("test", "systemctl try-restart shelley") {
+		t.Error("Shelley not restarted after waking")
 	}
 }

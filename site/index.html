@@ -142,7 +142,7 @@ a desktop with a browser at https://quick-fox--desktop.boxe.example.com (DISPLAY
 Docker works: docker run --rm alpine echo hello
 Manage your VMs from your computer: ssh boxe help
 
-<span class="p">exedev@quick-fox:~$</span></code></pre>
+<span class="p">boxedev@quick-fox:~$</span></code></pre>
 <pre class="out" id="out-ls" role="tabpanel" aria-labelledby="tab-ls" tabindex="0"><code><span class="p">$</span> ssh boxe ls
 NAME        IP          CPU  RAM  STATE     CPU%  RAM USED  DISK USED  OWNER  CREATED           EXPIRES   IMAGE
 quick-fox   10.42.0.17  2    2G   running   4%    618M      1.4G       ada    2026-10-30 09:12  -         boxeuntu-20261029
@@ -262,7 +262,7 @@ ssh boxe known-hosts &gt;&gt; ~/.ssh/known_hosts</code></pre>
       <li><code>/dev/kvm</code> and a ZFS pool</li>
       <li>Cloud Hypervisor v54 or later</li>
       <li>A guest kernel from <code>cloud-hypervisor/linux</code></li>
-      <li>Docker, to build the image</li>
+      <li>Docker and Go, to build the image</li>
       <li><code>nftables</code> and <code>iptables</code></li>
       <li>For the web: an OIDC provider, and a wildcard DNS record with a TLS proxy such as Caddy, or a Cloudflare Tunnel if the host has no public IP</li>
       <li>Optional: Tailscale for <code>ssh boxe</code> on your tailnet, <code>restic</code> for nightly backups</li>
@@ -282,11 +282,12 @@ zfs create boxe/sleep</code></pre>
     </li>
     <li>
       <h3>Build the base image</h3>
-      <p>exe.dev's exeuntu with a thin layer of ours. Tag it with today's date, here <code>20261030</code>.</p>
+      <p>exe.dev's exeuntu with a thin layer of ours, and our tool for its coding agents, built with Go. Tag it with today's date, here <code>20261030</code>.</p>
       <div class="code" data-ui>
-<pre><code>docker build -t boxeuntu:20261030 image/
+<pre><code>go build -o image/boxeuntu ./cmd/boxeuntu
+docker build -t boxeuntu:20261030 image/
 sudo scripts/build-base.sh boxeuntu:20261030 boxeuntu-20261030</code></pre>
-        <button class="copy" type="button" data-copy="docker build -t boxeuntu:20261030 image/&#10;sudo scripts/build-base.sh boxeuntu:20261030 boxeuntu-20261030">Copy</button>
+        <button class="copy" type="button" data-copy="go build -o image/boxeuntu ./cmd/boxeuntu&#10;docker build -t boxeuntu:20261030 image/&#10;sudo scripts/build-base.sh boxeuntu:20261030 boxeuntu-20261030">Copy</button>
       </div>
     </li>
     <li>

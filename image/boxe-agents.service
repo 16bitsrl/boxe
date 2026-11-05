@@ -1,0 +1,13 @@
+[Unit]
+Description=boxe: set the coding agents up for the models' gateway
+ConditionPathExists=/etc/boxe/llm-gateway
+After=network.target
+
+[Service]
+Type=oneshot
+User=boxedev
+Environment=HOME=/home/boxedev
+ExecStart=/usr/local/bin/boxeuntu configure
+
+[Install]
+WantedBy=multi-user.target

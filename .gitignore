@@ -27,3 +27,6 @@ tsnet/
 
 # Page review comments
 .review/
+
+# Built into the image (image/Dockerfile)
+/image/boxeuntu

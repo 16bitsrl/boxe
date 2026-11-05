@@ -495,6 +495,7 @@ func (b *Box) wake(user, name string) error {
 	if err := b.hv.WaitSSH(v, 10*time.Second); err != nil {
 		return err
 	}
+	go b.afterWake(v) // not in the way of who woke it
 	log.Printf("%s: %s woke up in %s", v.Owner, name, time.Since(start).Round(time.Millisecond))
 	return nil
 }

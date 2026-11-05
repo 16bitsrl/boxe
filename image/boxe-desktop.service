@@ -2,8 +2,8 @@
 Description=boxe desktop: KasmVNC on localhost:2997 (DISPLAY=:1)
 
 [Service]
-User=exedev
-Environment=DISPLAY=:1 HOME=/home/exedev
+User=boxedev
+Environment=DISPLAY=:1 HOME=/home/boxedev
 ExecStart=/usr/local/lib/boxe/desktop.sh
 # Ready once KasmVNC answers: the browser connects right after.
 ExecStartPost=/bin/sh -c 'until curl -sf -o /dev/null http://127.0.0.1:2997/; do sleep 0.1; done'

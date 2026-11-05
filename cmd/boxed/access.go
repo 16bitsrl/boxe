@@ -15,7 +15,7 @@ import (
 // given or taken away counts at the next login.
 
 // vmUser is the user members log into VMs as.
-const vmUser = "exedev"
+const vmUser = "boxedev"
 
 // usable is the VM name if user may use it: theirs, or one they have
 // access to.
@@ -106,7 +106,7 @@ func sshdAccessConf() string {
 }
 
 // serveSSHKeys answers the VM v's sshd with the keys that may log in as
-// exedev: the owner's and those of the members with access.
+// boxedev: the owner's and those of the members with access.
 func (b *Box) serveSSHKeys(w http.ResponseWriter, r *http.Request, v VM) {
 	if r.URL.Query().Get("user") != vmUser {
 		return

@@ -221,7 +221,7 @@ func (e exitStatus) Error() string { return "exit status " + strconv.Itoa(int(e)
 var execLine = regexp.MustCompile(`(?s)^\s*exec\s+(\S+)\s+(\S.*)$`)
 
 // cmdExec is `exec <name> <command>`: the command runs in the member's VM
-// as exedev, as with `ssh <name>.boxe <command>`, and what it printed comes
+// as boxedev, as with `ssh <name>.boxe <command>`, and what it printed comes
 // back. The command is the rest of the line as typed, for the VM's shell.
 func (b *Box) cmdExec(w io.Writer, user, line string) error {
 	m := execLine.FindStringSubmatch(line)

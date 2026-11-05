@@ -358,6 +358,11 @@ func (b *Box) wakeForJob(v VM, now time.Time) {
 		return
 	}
 	log.Printf("%s: %s woke up for %s at %s", cur.Owner, cur.Name, what, cur.NextJob.Local().Format(time.TimeOnly))
+	go func() {
+		if b.hv.WaitSSH(cur, 30*time.Second) == nil {
+			b.afterWake(cur)
+		}
+	}()
 	b.actMu.Lock()
 	a := b.activityOf(cur.Name, now)
 	a.last, a.job = now, cur.NextJob

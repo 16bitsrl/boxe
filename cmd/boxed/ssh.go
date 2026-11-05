@@ -30,12 +30,15 @@ const userKey ctxKey = "boxe-user"
 // Box is the SSH front end: `ssh boxe <command>` and the jump host for
 // `ssh <vm>.boxe`.
 type Box struct {
-	store  *Store
-	keys   *Keys
-	hv     *Hypervisor
-	mu     sync.RWMutex // serializes changes to VMs; jumps hold it for reading
-	limits Limits
-	name   string // what users ssh to, e.g. boxe
+	store *Store
+	keys  *Keys
+	hv    *Hypervisor
+	mu    sync.RWMutex // serializes changes to VMs; jumps hold it for reading
+
+	staleMu sync.Mutex
+	stale   map[string]bool // VMs asleep when their owner's keys changed: whether Shelley restarts too
+	limits  Limits
+	name    string // what users ssh to, e.g. boxe
 
 	backupConf, backupLast string // backups are on if backupConf exists; backupLast: when the last complete one ended
 	backupStatus           string // the last run, as boxe-backup.sh writes it
@@ -298,7 +301,7 @@ func (b *Box) run(w io.Writer, ask func(prompt string) (string, error), user, li
 	case args[0] == "token":
 		err = b.cmdToken(o, user, args[1:])
 	case args[0] == "ssh-config":
-		fmt.Fprintf(w, "Host *.%s\n  User exedev\n  ProxyJump %s\n", b.hv.SSHSuffix, b.name)
+		fmt.Fprintf(w, "Host *.%s\n  User boxedev\n  ProxyJump %s\n", b.hv.SSHSuffix, b.name)
 	case args[0] == "known-hosts":
 		// Every VM's host key is signed by boxe: one line trusts them all.
 		fmt.Fprintf(w, "@cert-authority *.%s %s", b.hv.SSHSuffix, gossh.MarshalAuthorizedKey(b.hv.HostCA.PublicKey()))

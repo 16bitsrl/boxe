@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -56,7 +57,7 @@ type Hypervisor struct {
 // stays so that `rm` can finish the job.
 var errLeftBehind = errors.New("left behind")
 
-const vmUID, vmGID = 1000, 1000 // exedev in exeuntu
+const vmUID, vmGID = 1000, 1000 // boxedev, exeuntu's exedev renamed
 
 var runDir = "/run/boxe/vm" // a directory per VM, see vmRunDir
 
@@ -205,7 +206,7 @@ func (h *Hypervisor) flush(v VM) error {
 	return err
 }
 
-// inVM runs cmd in v as exedev, over SSH with the host's own key. Only if
+// inVM runs cmd in v as boxedev, over SSH with the host's own key. Only if
 // the VM at v's address shows a certificate for v's name: another VM that
 // took the address meanwhile is not sent cmd.
 func (h *Hypervisor) inVM(v VM, timeout time.Duration, cmd string) ([]byte, error) {
@@ -238,7 +239,7 @@ func (h *Hypervisor) inVMWithKey(v VM, hostKey string, timeout time.Duration, cm
 	}
 	args := append([]string{"-i", h.HostKeyPath, "-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
 		"-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + known, "-o", "HostKeyAlias=" + alias}, algos...)
-	return h.exec(timeout, "ssh", append(args, "-o", "LogLevel=ERROR", "exedev@"+v.IP(), cmd)...)
+	return h.exec(timeout, "ssh", append(args, "-o", "LogLevel=ERROR", "boxedev@"+v.IP(), cmd)...)
 }
 
 // hostKey is the SSH host key of the VM named name as its config disk has
@@ -271,7 +272,7 @@ func (h *Hypervisor) StartAgent(v VM, prompt string) (string, error) {
 	// Without a model of its own Shelley has only a fake one, for tests,
 	// which it does not list.
 	out, err := h.inVM(v, 30*time.Second, `m=$(curl -sf --unix-socket ~/.config/shelley/shelley.sock http://shelley/api/models) || exit 1; `+
-		`[ "$m" != "[]" ] || { echo no models; exit 3; }; shelley client chat -cwd /home/exedev -p `+quoted)
+		`[ "$m" != "[]" ] || { echo no models; exit 3; }; shelley client chat -cwd /home/boxedev -p `+quoted)
 	if err != nil && strings.TrimSpace(string(out)) == "no models" {
 		return "", fmt.Errorf("its agent has no model yet: add your API key at https://%s--agent.%s, or copy (cp or fork) a VM where you did", v.Name, h.WebDomain)
 	}
@@ -371,11 +372,11 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 		{"etc/ssh/ssh_host_ed25519_key", hostKey, 0o600, false},
 		{"etc/ssh/ssh_host_ed25519_key.pub", hostPub, 0o644, false},
 		{"etc/ssh/ssh_host_ed25519_key-cert.pub", hostCert, 0o644, false},
-		{"home/exedev/.ssh/authorized_keys", authorizedKeys + h.HostPubKey, 0o600, true},
+		{"home/boxedev/.ssh/authorized_keys", authorizedKeys + h.HostPubKey, 0o600, true},
 		{"etc/ssh/sshd_config.d/boxe-access.conf", sshdAccessConf(), 0o644, false},
 		{"etc/boxe/web-domain", h.WebDomain + "\n", 0o644, false},
 		{"etc/boxe/net", fmt.Sprintf("ADDRESS=%s/%d\nGATEWAY=%s\nMAC=%s\n", v.IP(), vmNet.Bits(), gatewayIP(), v.MAC()), 0o644, false},
-		{"home/exedev/.config/boxe/AGENTS.md", h.agentsMD(v), 0o644, true},
+		{"home/boxedev/.config/boxe/AGENTS.md", h.agentsMD(v), 0o644, true},
 		{"etc/boxe/id", hex.EncodeToString(id) + "\n", 0o644, false},
 	}
 	if g := h.LLMGateway; g != "" {
@@ -384,12 +385,14 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 		// From the configuration, not the image: new VMs of every image,
 		// and copies of older VMs, get them. VMs made before do not.
 		files = append(files[:len(files)-1], []file{
+			// For boxeuntu configure, which sets the coding agents up for it.
+			{"etc/boxe/llm-gateway", g + "\n", 0o644, false},
 			{"etc/profile.d/boxe-llm.sh", "# The API keys of the user's boxe account (ssh boxe llm): the host adds them\n" +
 				"# to the requests that go through its gateway.\n" +
 				"eval \"$(curl -sf --noproxy " + host + " --connect-timeout 1 --max-time 2 " + g + "/env 2>/dev/null)\"\n", 0o644, false},
 			{"etc/systemd/system/shelley.service.d/llm.conf", "# Shelley uses the boxe gateway when its user has a key there.\n[Service]\n" +
 				"ExecStartPre=-/bin/sh -c 'curl -sf --noproxy " + host + " --connect-timeout 1 --max-time 3 -o " + shelleyConfig + " " + g + "/shelley.json || echo {} > " + shelleyConfig + "'\n" +
-				"ExecStart=\nExecStart=/usr/local/bin/shelley -db /home/exedev/.config/shelley/shelley.db -config " + shelleyConfig +
+				"ExecStart=\nExecStart=/usr/local/bin/shelley -db /home/boxedev/.config/shelley/shelley.db -config " + shelleyConfig +
 				" serve -systemd-activation -require-header X-Box-Email\n", 0o644, false},
 			files[len(files)-1], // the id stays last
 		}...)
@@ -404,7 +407,7 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 	for _, d := range []struct {
 		name string
 		mode int64
-	}{{"home/exedev/.ssh", 0o700}, {"home/exedev/.config/boxe", 0o755}} {
+	}{{"home/boxedev/.ssh", 0o700}, {"home/boxedev/.config/boxe", 0o755}} {
 		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: d.name, Mode: d.mode,
 			Uid: vmUID, Gid: vmGID, ModTime: now}); err != nil {
 			return nil, err
@@ -432,7 +435,7 @@ func (h *Hypervisor) configArchive(v VM, authorizedKeys string) ([]byte, error) 
 	return append(buf.Bytes(), make([]byte, configSize-buf.Len())...), nil
 }
 
-const shelleyConfig = "/home/exedev/.config/shelley/boxe.json"
+const shelleyConfig = "/home/boxedev/.config/shelley/boxe.json"
 
 // configSize is the size of every config disk: a fork swaps it while the VM
 // runs, and the VM keeps the size it saw at boot.
@@ -456,7 +459,8 @@ func (h *Hypervisor) agentsMD(v VM) string {
 		sleep = fmt.Sprintf("- When nobody uses it for a while, the VM goes to sleep: its memory is saved and everything in it pauses. The next SSH connection or web request wakes it up where it was, in about a second. Cron jobs and systemd timers keep working: the VM wakes up shortly before each one and goes back to sleep after. A server that must answer without that delay, or a program that must keep running (a bot, a queue worker), needs `ssh boxe keep-awake %s on`, run from the user's computer.\n", v.Name)
 	}
 	return fmt.Sprintf("You are running in a boxe VM named %[1]s: a microVM on the team's own infrastructure. It is similar to exe.dev, but `ssh exe.dev` is not available here.\n\n"+
-		"- Ubuntu, user `exedev` with passwordless sudo, persistent disk. Docker works.\n"+
+		"- Ubuntu, user `boxedev` with passwordless sudo, persistent disk. Docker works.\n"+
+		"- Coding agents: Claude Code, Codex, OpenCode, pi and Shelley. `sudo boxeuntu update <claude|codex|opencode>` (and `boxeuntu update pi`, without sudo) updates one to its latest version.\n"+
 		"- Terminal sessions that outlive the SSH connection: `scroll [name]` (exe-scroll). Drive one without attaching: `exe-scroll send-keys ~/.local/state/scroll/<name>.sock 'make test' Enter`, `exe-scroll capture-pane ~/.local/state/scroll/<name>.sock`.\n"+
 		"- Internet works, unless your user restricted this VM to its integrations (`ssh boxe egress`, from their computer): then only the integrations and the models' gateway answer (with only tools that run in the VM: no web search, web fetch, MCP servers or code run at the provider), and only integration names resolve. The team's LAN, the host and the other VMs are not reachable from here.\n"+
 		"- Integrations: your user keeps API secrets on the host and attaches them to this VM (`ssh boxe integrations`, from their computer). Call one at http://<integration>.int.%[3]s/<path>, plain HTTP (e.g. `curl http://stripe.int.%[3]s/v1/customers`): the host adds the credentials on the way out, so you never see the keys; do not ask for them nor send your own. An integration not attached to this VM answers 403.\n"+
@@ -830,4 +834,17 @@ func powerOff(sock string, pid int, wait time.Duration) error {
 		}
 	}
 	return fmt.Errorf("the guest did not shut down within %v", wait)
+}
+
+// refreshAgents sets v's coding agents up for the providers its owner has a
+// key for (boxeuntu, in VMs made since it is in the image) and, if shelley,
+// restarts Shelley.
+func (h *Hypervisor) refreshAgents(v VM, shelley bool) {
+	cmd := "if command -v boxeuntu >/dev/null; then boxeuntu configure >/dev/null; fi"
+	if shelley {
+		cmd = "sudo systemctl try-restart shelley.service; " + cmd
+	}
+	if out, err := h.inVM(v, 15*time.Second, cmd); err != nil {
+		log.Printf("set the agents up in %s: %v: %s", v.Name, err, out)
+	}
 }

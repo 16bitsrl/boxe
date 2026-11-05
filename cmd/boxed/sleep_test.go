@@ -405,7 +405,7 @@ func TestWakeAfterAnInterruptedWake(t *testing.T) {
 // cronAt is a schedule answer with a crontab line that runs at t (UTC).
 func cronAt(t time.Time) string {
 	t = t.UTC()
-	return fmt.Sprintf("localtime /usr/share/zoneinfo/Etc/UTC\n--- crontab exedev\n%d %d %d %d * /home/exedev/backup.sh\n",
+	return fmt.Sprintf("localtime /usr/share/zoneinfo/Etc/UTC\n--- crontab boxedev\n%d %d %d %d * /home/boxedev/backup.sh\n",
 		t.Minute(), t.Hour(), t.Day(), int(t.Month()))
 }
 
@@ -546,7 +546,7 @@ func TestJobWakeRespectsTheQuota(t *testing.T) {
 	b.limits = Limits{UserMem: 4096}
 	c.must("alice", "new a1 --mem 2G")
 	c.must("alice", "new b1 --mem 2G")
-	c.host.schedule["a1"] = "localtime /usr/share/zoneinfo/Etc/UTC\n--- crontab exedev\n*/10 * * * * x\n"
+	c.host.schedule["a1"] = "localtime /usr/share/zoneinfo/Etc/UTC\n--- crontab boxedev\n*/10 * * * * x\n"
 	c.must("alice", "sleep a1")
 	c.must("alice", "new c1 --mem 2G")
 	b.busy("b1", 1)

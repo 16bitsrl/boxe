@@ -615,27 +615,53 @@ func (g *Gateway) check(p llmProvider, key string) error {
 // price is in USD per million tokens.
 type price struct{ Input, Output, CacheRead, CacheWrite float64 }
 
-// prices by model, list prices of the providers' own APIs. A dated
-// snapshot (-20250929, -2025-08-07) costs as its model. Cache writes are
-// priced as those that last 5 minutes; long-context and batch prices are
-// not counted. Unknown models are counted without cost.
+// prices by model, list prices of the providers' own APIs, as of
+// 2026-11-05 (platform.claude.com/docs/en/about-claude/pricing,
+// developers.openai.com/api/docs/pricing): update them when models come out
+// or prices change. A dated snapshot (-20250929, -2025-08-07) costs as its
+// model. Cache writes are priced as those that last 5 minutes (OpenAI's are
+// not counted); long-context, fast-mode and batch prices are not counted.
+// Unknown models are counted without cost.
 var prices = map[string]price{
 	"claude-fable-5-1":       {10, 50, 0.25, 12.5},
 	"claude-fable-5":         {10, 50, 1, 12.5},
+	"claude-mythos-5-1":      {10, 50, 0.25, 12.5},
+	"claude-mythos-5":        {10, 50, 1, 12.5},
 	"claude-opus-5-5":        {4, 20, 0.20, 5},
 	"claude-opus-5":          {5, 25, 0.50, 6.25},
 	"claude-opus-4-8":        {5, 25, 0.50, 6.25},
 	"claude-opus-4-7":        {5, 25, 0.50, 6.25},
 	"claude-opus-4-6":        {5, 25, 0.50, 6.25},
 	"claude-opus-4-5":        {5, 25, 0.50, 6.25},
-	"claude-sonnet-5-5":      {2, 10, 0.20, 2.5},
+	"claude-opus-4-1":        {15, 75, 1.50, 18.75},
+	"claude-opus-4":          {15, 75, 1.50, 18.75},
+	"claude-sonnet-5-5":      {2, 10, 0.10, 2.5},
 	"claude-sonnet-5":        {2, 10, 0.20, 2.5},
 	"claude-sonnet-4-6":      {3, 15, 0.30, 3.75},
 	"claude-sonnet-4-5":      {3, 15, 0.30, 3.75},
 	"claude-sonnet-4":        {3, 15, 0.30, 3.75},
 	"claude-haiku-5-5":       {0.10, 0.50, 0.01, 0.125},
 	"claude-haiku-4-5":       {1, 5, 0.10, 1.25},
+	"gpt-6-astra":            {10, 50, 1, 0},
+	"gpt-6.1-sol":            {2, 10, 0.10, 0},
+	"gpt-6.1-terra":          {1, 5, 0.05, 0},
+	"gpt-6-sol":              {2, 10, 0.20, 0},
+	"gpt-6-luna":             {0.10, 0.50, 0.01, 0},
+	"gpt-5.6-sol":            {4, 20, 0.40, 0},
+	"gpt-5.6-terra":          {2, 12, 0.20, 0},
+	"gpt-5.6-luna":           {0.20, 1.20, 0.02, 0},
+	"gpt-5.5":                {5, 30, 0.50, 0},
+	"gpt-5.5-pro":            {30, 180, 0, 0},
+	"gpt-5.4":                {2.5, 15, 0.25, 0},
+	"gpt-5.4-pro":            {30, 180, 0, 0},
+	"gpt-5.4-mini":           {0.75, 4.50, 0.075, 0},
+	"gpt-5.4-nano":           {0.20, 1.25, 0.02, 0},
+	"gpt-5.3-codex":          {1.75, 14, 0.175, 0},
+	"gpt-5.2":                {1.75, 14, 0.175, 0},
+	"gpt-5.2-pro":            {21, 168, 0, 0},
+	"gpt-5.1":                {1.25, 10, 0.125, 0},
 	"gpt-5":                  {1.25, 10, 0.125, 0},
+	"gpt-5-pro":              {15, 120, 0, 0},
 	"gpt-5-mini":             {0.25, 2, 0.025, 0},
 	"gpt-5-nano":             {0.05, 0.40, 0.005, 0},
 	"gpt-4.1":                {2, 8, 0.50, 0},
@@ -644,6 +670,7 @@ var prices = map[string]price{
 	"gpt-4o":                 {2.5, 10, 1.25, 0},
 	"gpt-4o-mini":            {0.15, 0.60, 0.075, 0},
 	"o3":                     {2, 8, 0.50, 0},
+	"o3-pro":                 {20, 80, 0, 0},
 	"o4-mini":                {1.10, 4.40, 0.275, 0},
 	"text-embedding-3-small": {0.02, 0, 0, 0},
 	"text-embedding-3-large": {0.13, 0, 0, 0},
@@ -702,11 +729,11 @@ func (b *Box) cmdLLM(o output, ask func(string) (string, error), user string, ar
 		if err != nil {
 			return err
 		}
-		if (len(before) == 0) != (len(after) == 0) {
-			b.restartShelley(user)
+		if (before[p.name] == "") != (after[p.name] == "") {
+			b.refreshAgents(user, (len(before) == 0) != (len(after) == 0))
 		}
 		status := map[bool]string{true: "saved", false: "removed"}[sub == "set"]
-		text := fmt.Sprintf("%s key %s. Your VMs use it from the next login shell; Shelley already does.\n", p.name, status)
+		text := fmt.Sprintf("%s key %s. Your VMs use it from the next login shell; Shelley, Codex, OpenCode and pi already do.\n", p.name, status)
 		if sub == "rm" {
 			text = fmt.Sprintf("%s key removed.\n", p.name)
 		}
@@ -831,25 +858,45 @@ func tokens(n int64) string {
 	return fmt.Sprintf("%.1fM", float64(n)/1e6)
 }
 
-// restartShelley restarts Shelley in user's running VMs: it reads whether
-// to use the gateway when it starts.
-func (b *Box) restartShelley(user string) {
+// refreshAgents sets the coding agents of user's VMs up for the providers
+// they now have a key for, and restarts Shelley if asked: it reads whether
+// to use the gateway when it starts. Running VMs right away; sleeping ones
+// when they wake, as resuming their memory does not run the boot again.
+func (b *Box) refreshAgents(user string, shelley bool) {
 	vms, err := b.store.List(user)
 	if err != nil {
 		return
 	}
 	var wg sync.WaitGroup
 	for _, v := range vms {
-		if !b.hv.Running(v.Name) || b.hv.Sleeping(v.Name) {
+		if b.hv.Sleeping(v.Name) {
+			b.staleMu.Lock()
+			if b.stale == nil {
+				b.stale = map[string]bool{}
+			}
+			b.stale[v.Name] = b.stale[v.Name] || shelley
+			b.staleMu.Unlock()
 			continue
+		}
+		if !b.hv.Running(v.Name) {
+			continue // the boot sets them up
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if out, err := b.hv.inVM(v, 10*time.Second, "sudo systemctl try-restart shelley.service"); err != nil {
-				log.Printf("restart Shelley in %s: %v: %s", v.Name, err, out)
-			}
+			b.hv.refreshAgents(v, shelley)
 		}()
 	}
 	wg.Wait()
+}
+
+// afterWake does in v, which just woke up, what refreshAgents left for then.
+func (b *Box) afterWake(v VM) {
+	b.staleMu.Lock()
+	shelley, ok := b.stale[v.Name]
+	delete(b.stale, v.Name)
+	b.staleMu.Unlock()
+	if ok {
+		b.hv.refreshAgents(v, shelley)
+	}
 }

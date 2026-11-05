@@ -22,7 +22,7 @@ func TestAgentFlag(t *testing.T) {
 			chat = cmd
 		}
 	}
-	if !strings.Contains(chat, "exedev@10.42.0.2") || !strings.Contains(chat, `-p 'fix the bug, don'\''t break "anything"'`) {
+	if !strings.Contains(chat, "boxedev@10.42.0.2") || !strings.Contains(chat, `-p 'fix the bug, don'\''t break "anything"'`) {
 		t.Errorf("chat started with %q", chat)
 	}
 

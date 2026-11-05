@@ -8,9 +8,18 @@ of exe.dev, also under the Apache License 2.0:
 https://github.com/boldsoftware/exeuntu
 image/Dockerfile starts from a pinned exeuntu release and adds our layer:
 image/boxe-init, image/boxe-welcome.sh, image/sshd-boxe.conf,
-image/ssh-early.conf, image/boxe-sshkeys.service, and the changes made by the
+image/ssh-early.conf, image/boxe-sshkeys.service, image/boxe-rename-user.sh,
+image/boxe-agents.service, and the changes made by the
 RUN steps of image/Dockerfile (SSH as a plain service, no nologin, welcome
-message, instructions for coding agents).
+message, instructions for coding agents, the user renamed to boxedev).
+
+cmd/boxeuntu, the image's tool for its coding agents, is a fork of exeuntu's
+CLI (https://github.com/boldsoftware/exeuntu/tree/main/cli, commit c6635f5),
+Apache License 2.0. cmd/boxeuntu/internal/agentupdate and
+cmd/boxeuntu/internal/piupdate are exeuntu's, modified: updating OpenCode no
+longer installs exe.dev's plugin and removes it if present. cmd/boxeuntu/main.go
+and cmd/boxeuntu/internal/agentconfig are ours. The image no longer includes
+exeuntu's CLI, its OpenCode and pi plugins, nor exe-setup.service.
 
 The image also includes Shelley by Bold Software, under the Apache License
 2.0, unmodified: https://github.com/boldsoftware/shelley

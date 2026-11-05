@@ -124,8 +124,10 @@ before you trust it with anything.
   address), which knows the VM by its address, puts the owner's key in the
   request and counts the tokens of the answer, streams included. Login shells
   in the VM get `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` and a placeholder
-  `*_API_KEY`, so SDKs, Claude Code and Codex work as they are; Shelley is
-  set up for it too. A request with a key of its own passes through as it is
+  `*_API_KEY`, so SDKs and Claude Code work as they are. Shelley, Codex,
+  OpenCode and pi are set up for it by the image (`boxeuntu configure`, at
+  boot and when the owner adds or removes a key), for the providers the owner
+  has a key for; a config file the user changed is left alone. A request with a key of its own passes through as it is
   (and is counted). For streamed Chat Completions the gateway asks OpenAI for
   the final chunk with the tokens (`stream_options.include_usage`), unless
   the request says otherwise. `ssh boxe llm usage` shows tokens and estimated cost per
@@ -238,7 +240,7 @@ everything after `--agent` is the prompt, as typed. Quote the whole command
 when the prompt has characters your shell would read, like an apostrophe.
 
 `ssh boxe exec <name> <command>` is `ssh <name>.boxe <command>` for programs
-and the API: the command runs as `exedev`, the VM wakes up first if it
+and the API: the command runs as `boxedev`, the VM wakes up first if it
 sleeps, it may run for 5 minutes, and boxe exits with its exit status. The
 rest of the line goes to the VM's shell as typed, `--json` included.
 
@@ -387,7 +389,10 @@ only where nested virtualization is offered (GCP, Azure, AWS C8i/M8i/R8i).
    install -D -m644 linux/vmlinux /var/lib/boxe/kernels/vmlinux-7.2.8-boxe
    ```
    That path is `boxed`'s default; a kernel elsewhere needs `-kernel`.
-4. **Base image:**
+4. **Base image:** first `boxeuntu`, the image's tool for its coding
+   agents, with Go (on the host, or anywhere and then copied to `image/`):
+   `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxeuntu ./cmd/boxeuntu`.
+   Then
    `docker build -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>`.
 5. **Host setup:**
    - `useradd --system --no-create-home --shell /usr/sbin/nologin boxe-vm`.
@@ -518,6 +523,14 @@ Cloudflare, and nothing listens on the internet.
   Images are never rebuilt in place, because VMs are clones of them.
   Existing VMs keep their image. Delete an old image once
   `zfs list -o clones` shows no VM uses it.
+- **The VM user is `boxedev`** (it was exeuntu's `exedev` until November
+  2026). VMs made before keep `exedev` until they are renamed: before
+  deploying a `boxed` with `boxedev`, run in each one
+  `ssh <name>.boxe 'sudo bash -s -- --keep-old-home' < image/boxe-rename-user.sh`.
+  It renames the user without stopping what runs in the VM, and leaves
+  `/home/exedev` as a link to the new home. Build a new base image and point
+  `-base` at it. Members change `User exedev` to `User boxedev` in their
+  `~/.ssh/config` (`ssh boxe ssh-config` prints the new entry).
 - **New guest kernel:** install it under a new name and point `-kernel`
   at it. Keep the old file until every VM has restarted on the new one
   (`ssh boxe restart <name>`): a VM started from it needs it to stop or

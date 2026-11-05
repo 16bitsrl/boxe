@@ -77,7 +77,7 @@ func TestConfigArchive(t *testing.T) {
 	if e := check("etc/boxe/web-domain", 0o644, 0, tar.TypeReg); e.contents != "boxe.example\n" {
 		t.Errorf("web-domain: %q", e.contents)
 	}
-	agents := check("home/exedev/.config/boxe/AGENTS.md", 0o644, vmUID, tar.TypeReg).contents
+	agents := check("home/boxedev/.config/boxe/AGENTS.md", 0o644, vmUID, tar.TypeReg).contents
 	for _, want := range []string{"https://quick-fox.boxe.example", "https://quick-fox--<port>.boxe.example", "ssh boxe help",
 		"http://<integration>.int.boxe/", "git clone http://github.int.boxe/OWNER/REPO", "ssh boxe egress"} {
 		if !strings.Contains(agents, want) {
@@ -120,8 +120,8 @@ func TestConfigArchive(t *testing.T) {
 	if !bytes.Equal(cert.Key.Marshal(), hostKey.Marshal()) {
 		t.Error("certificate is not for the VM's host key")
 	}
-	check("home/exedev/.ssh", 0o700, vmUID, tar.TypeDir)
-	if e := check("home/exedev/.ssh/authorized_keys", 0o600, vmUID, tar.TypeReg); e.contents != "ssh-ed25519 USER u\nssh-ed25519 HOST host\n" {
+	check("home/boxedev/.ssh", 0o700, vmUID, tar.TypeDir)
+	if e := check("home/boxedev/.ssh/authorized_keys", 0o600, vmUID, tar.TypeReg); e.contents != "ssh-ed25519 USER u\nssh-ed25519 HOST host\n" {
 		t.Errorf("authorized_keys: %q", e.contents)
 	}
 	id := check("etc/boxe/id", 0o644, 0, tar.TypeReg).contents
@@ -177,7 +177,7 @@ func TestConfigSaysVMsSleep(t *testing.T) {
 		return m
 	}
 	f := files()
-	if _, ok := f["etc/boxe/sleeps"]; ok || strings.Contains(f["home/exedev/.config/boxe/AGENTS.md"], "sleep") {
+	if _, ok := f["etc/boxe/sleeps"]; ok || strings.Contains(f["home/boxedev/.config/boxe/AGENTS.md"], "sleep") {
 		t.Error("VMs never sleep here, yet the VM says they do")
 	}
 	h.SleepDir = "/boxe/sleep"
@@ -186,7 +186,7 @@ func TestConfigSaysVMsSleep(t *testing.T) {
 		t.Error("no etc/boxe/sleeps")
 	}
 	for _, want := range []string{"sleep", "Cron jobs", "systemd timers", "keep-awake quick-fox on"} {
-		if !strings.Contains(f["home/exedev/.config/boxe/AGENTS.md"], want) {
+		if !strings.Contains(f["home/boxedev/.config/boxe/AGENTS.md"], want) {
 			t.Errorf("AGENTS.md lacks %q", want)
 		}
 	}

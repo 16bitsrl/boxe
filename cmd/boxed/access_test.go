@@ -117,7 +117,7 @@ func TestAccessUse(t *testing.T) {
 	}
 }
 
-// The VM's sshd asks boxe for the keys that may log in as exedev: the
+// The VM's sshd asks boxe for the keys that may log in as boxedev: the
 // owner's and those of the members with access, as they are now.
 func TestAccessSSHKeys(t *testing.T) {
 	c := newCLI(t, "alice", "bob", "carol")
@@ -137,18 +137,18 @@ func TestAccessSSHKeys(t *testing.T) {
 		}
 		return string(b)
 	}
-	if k := keys("exedev"); k != "ssh-ed25519 AAAAalice alice@laptop\n" {
+	if k := keys("boxedev"); k != "ssh-ed25519 AAAAalice alice@laptop\n" {
 		t.Errorf("owner only: %q", k)
 	}
 	c.must("alice", "access test add bob")
-	if k := keys("exedev"); !strings.Contains(k, "AAAAalice") || !strings.Contains(k, "AAAAbob") || strings.Contains(k, "AAAAcarol") {
+	if k := keys("boxedev"); !strings.Contains(k, "AAAAalice") || !strings.Contains(k, "AAAAbob") || strings.Contains(k, "AAAAcarol") {
 		t.Errorf("with bob: %q", k)
 	}
 	if k := keys("root"); k != "" {
 		t.Errorf("keys for root: %q", k)
 	}
 	c.must("alice", "access test add team")
-	if k := keys("exedev"); strings.Count(k, "AAAAbob") != 1 || !strings.Contains(k, "AAAAcarol") {
+	if k := keys("boxedev"); strings.Count(k, "AAAAbob") != 1 || !strings.Contains(k, "AAAAcarol") {
 		t.Errorf("with the team: %q", k)
 	}
 	// Who leaves the team loses access with their keys.
@@ -156,7 +156,7 @@ func TestAccessSSHKeys(t *testing.T) {
 	c.box.keys.users = []string{"alice", "bob"}
 	delete(c.box.keys.byUser, "carol")
 	c.box.keys.mu.Unlock()
-	if k := keys("exedev"); strings.Contains(k, "AAAAcarol") {
+	if k := keys("boxedev"); strings.Contains(k, "AAAAcarol") {
 		t.Errorf("carol left the team: %q", k)
 	}
 }
