@@ -316,6 +316,22 @@ func (h *Hypervisor) FreeSpace() (int64, error) {
 	return strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
 }
 
+// PoolState is "" if the ZFS pool of the VM disks is healthy, else its
+// state as zpool status says it (DEGRADED, SUSPENDED...), or "unknown".
+func (h *Hypervisor) PoolState() string {
+	pool, _, _ := strings.Cut(h.Dataset, "/")
+	out, err := h.exec(10*time.Second, "zpool", "status", "-x", pool)
+	if err == nil && strings.Contains(string(out), "is healthy") {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if st, ok := strings.CutPrefix(strings.TrimSpace(line), "state:"); ok {
+			return strings.TrimSpace(st)
+		}
+	}
+	return "unknown"
+}
+
 // writeConfig writes what makes the disk this VM (hostname, DNS, SSH keys)
 // to a small archive that Start attaches as a second, read-only disk;
 // boxe-init applies it inside the VM before systemd starts. The host never

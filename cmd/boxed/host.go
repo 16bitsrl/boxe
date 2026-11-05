@@ -36,6 +36,7 @@ type hostMember struct {
 type backupRun struct {
 	Start  int64    `json:"start"`
 	End    int64    `json:"end"`
+	Size   int64    `json:"size"` // of the repository after the run, bytes; 0 unknown
 	Failed []string `json:"failed"`
 }
 

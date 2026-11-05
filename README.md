@@ -563,8 +563,8 @@ Cloudflare, and nothing listens on the internet.
   - To remove someone, delete the line and run `boxed -revoke <email>`.
     Their VMs stay until an admin deletes them.
 - **Health:** `https://<domain>/healthz` answers `ok`, or 503 with what needs
-  attention: failed VMs, low disk, stale GitHub keys, an old backup. Point
-  any uptime monitor at it.
+  attention: failed VMs, low disk, a ZFS pool not healthy, stale GitHub keys,
+  an old backup. Point any uptime monitor at it.
 - **Logs:** `journalctl -u boxed`, `journalctl -u boxe-front` and
   `journalctl -u boxe-vm-<name>` (the VM's console).
 - **RAM:** VMs are given the RAM they ask for, as the host has it, up to

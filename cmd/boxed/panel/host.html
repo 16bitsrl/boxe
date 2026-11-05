@@ -30,7 +30,7 @@
     <td class="owner">{{.User}}</td>
     <td>{{if .Email}}{{.Email}}{{else}}<span class="muted">none: no panel, agent or desktop</span>{{end}}</td>
     <td>{{if .Admin}}admin{{else}}member{{end}}</td>
-    <td class="num" data-label="Keys">{{.Keys}}</td>
+    <td class="num" data-label="Keys">{{.Keys}}{{with .KeyProblem}}<br><span class="bad">{{.}}</span>{{end}}</td>
     <td class="num" data-label="VMs">{{.VMs}}</td>
     <td class="num" data-label="Awake RAM">{{.MemAwake}}</td>
   </tr>
@@ -48,6 +48,7 @@
     <dt>Last complete</dt><dd>{{if .Last}}{{when .Last}}{{else}}never{{end}}</dd>
     {{with .Run}}
     <dt>Last run</dt><dd>{{when .Started}}{{if .End}}, took {{.Took}}{{else}}, not finished{{end}}</dd>
+    {{if .Size}}<dt>Stored</dt><dd>{{size .Size}}</dd>{{end}}
     {{if .Failed}}<dt>Not saved</dt><dd>{{range $i, $vm := .Failed}}{{if $i}}, {{end}}<a href="/vm/{{$vm}}">{{$vm}}</a>{{end}}</dd>{{end}}
     {{end}}
   </dl>

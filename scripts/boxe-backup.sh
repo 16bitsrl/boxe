@@ -51,9 +51,12 @@ for ds in $(zfs list -H -o name -d 1 "$DATASET" | tail -n +2 | grep -v -- '-befo
 done
 
 restic forget --host boxe --group-by host,tags --prune $KEEP
+# What the repository takes after pruning (what the storage bills), for the
+# panel; 0 if restic cannot say. Slow on a big repository: here, not in boxed.
+size=$(restic stats --mode raw-data --json 2>/dev/null | grep -o '"total_size":[0-9]*' | cut -d: -f2 || true)
 list=
 for vm in "${failed[@]}"; do list+="${list:+,}\"$vm\""; done
-status "{\"start\":$start,\"end\":$(date -u +%s),\"failed\":[$list]}"
+status "{\"start\":$start,\"end\":$(date -u +%s),\"failed\":[$list],\"size\":${size:-0}}"
 # Only a complete backup counts: a VM left out shows on /healthz.
 [ ${#failed[@]} = 0 ] && date -u +%s > /var/lib/boxe/backup-last
 [ ${#failed[@]} = 0 ]

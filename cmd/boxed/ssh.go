@@ -1169,6 +1169,9 @@ func (b *Box) problems() []string {
 			p = append(p, "disk space low")
 		}
 	}
+	if state := b.hv.PoolState(); state != "" {
+		p = append(p, "ZFS pool not healthy ("+state+")")
+	}
 	if since := time.Since(b.keys.LastOK()); since > 24*time.Hour {
 		p = append(p, fmt.Sprintf("GitHub keys not refreshed for %s", since.Round(time.Hour)))
 	}

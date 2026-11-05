@@ -186,3 +186,4 @@ pre.console:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; 
   .vms .num::before { content: attr(data-label) " "; color: var(--muted); }
   .vms .actions { grid-column: 1 / -1; text-align: left; }
 }
+.bad { color: var(--red); }

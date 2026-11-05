@@ -41,6 +41,7 @@ type fakeHost struct {
 	disk      string                           // zfs list of the VM disks: name, referenced
 	onSSH     func()                           // runs once, when something next waits for a VM's sshd
 	journal   map[string]string                // unit -> what its process printed, as journalctl shows it
+	zpool     string                           // what zpool status -x says; "": healthy
 	inVM      func(cmd string) ([]byte, error) // runs the other commands sent to a VM over SSH
 	onSave    func(dir string)                 // runs after the hypervisor saved a VM in dir, as a hypervisor taken over could
 }
@@ -110,6 +111,11 @@ func (f *fakeHost) exec(_ time.Duration, name string, args ...string) ([]byte, e
 		}
 	}
 	switch {
+	case name == "zpool":
+		if f.zpool != "" {
+			return []byte(f.zpool), nil
+		}
+		return []byte("pool '" + args[len(args)-1] + "' is healthy\n"), nil
 	case name == "journalctl":
 		for _, a := range args {
 			if u, ok := strings.CutPrefix(a, "_SYSTEMD_UNIT="); ok {

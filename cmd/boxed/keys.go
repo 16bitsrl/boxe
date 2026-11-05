@@ -22,12 +22,20 @@ type Keys struct {
 	store     *Store
 
 	mu     sync.RWMutex
-	users  []string          // as in usersFile
-	byKey  map[string]string // marshalled public key -> user
-	byUser map[string]string // user -> authorized_keys lines
-	emails map[string]string // user -> email at the IdP, if given
-	admins map[string]bool   // users marked admin in usersFile
-	lastOK time.Time         // last refresh where GitHub answered for everyone
+	users  []string            // as in usersFile
+	byKey  map[string]string   // marshalled public key -> user
+	byUser map[string]string   // user -> authorized_keys lines
+	emails map[string]string   // user -> email at the IdP, if given
+	admins map[string]bool     // users marked admin in usersFile
+	lastOK time.Time           // last refresh where GitHub answered for everyone
+	errs   map[string]keyError // user -> why GitHub does not answer for them
+}
+
+// keyError is GitHub failing for a member: the latest error, since the
+// first failure in a row.
+type keyError struct {
+	Err   string
+	Since time.Time
 }
 
 func (k *Keys) LastOK() time.Time {
@@ -97,11 +105,28 @@ func (k *Keys) Admin(user string) bool {
 	return k.admins[user]
 }
 
-// teamMember is a line of the users file, with how many keys the member has.
+// teamMember is a line of the users file, with how many keys the member has
+// and, if GitHub does not answer for them, why and since when.
 type teamMember struct {
-	User, Email string
-	Admin       bool
-	Keys        int
+	User, Email   string
+	Admin         bool
+	Keys          int
+	KeyError      string
+	KeyErrorSince time.Time
+}
+
+// KeyProblem is GitHub failing for the member, for the admin's page, e.g.
+// "GitHub: 404 Not Found, for 3h"; "" if it answers.
+func (m teamMember) KeyProblem() string {
+	if m.KeyError == "" {
+		return ""
+	}
+	d := max(time.Since(m.KeyErrorSince).Round(time.Minute), time.Minute)
+	took := strings.TrimSuffix(d.String(), "0s") // 1h30m0s: 1h30m
+	if strings.HasSuffix(took, "h0m") {
+		took = strings.TrimSuffix(took, "0m") // 3h0m: 3h
+	}
+	return "GitHub: " + strings.TrimPrefix(m.KeyError, "github: ") + ", for " + took
 }
 
 // Members are the team, in the order of the users file.
@@ -110,7 +135,8 @@ func (k *Keys) Members() []teamMember {
 	defer k.mu.RUnlock()
 	var m []teamMember
 	for _, u := range k.users {
-		m = append(m, teamMember{u, k.emails[u], k.admins[u], strings.Count(k.byUser[u], "\n")})
+		e := k.errs[u]
+		m = append(m, teamMember{u, k.emails[u], k.admins[u], strings.Count(k.byUser[u], "\n"), e.Err, e.Since})
 	}
 	return m
 }
@@ -124,10 +150,19 @@ func (k *Keys) Refresh() {
 	byKey := map[string]string{}
 	byUser := map[string]string{}
 	allOK := true
+	k.mu.RLock()
+	before := k.errs
+	k.mu.RUnlock()
+	errs := map[string]keyError{}
 	for _, u := range users {
 		keys, err := fetchGitHubKeys(u)
 		if err != nil {
 			allOK = false
+			e := keyError{Err: err.Error(), Since: time.Now()}
+			if prev, ok := before[u]; ok {
+				e.Since = prev.Since
+			}
+			errs[u] = e
 			// Keep working with the last keys we saw for this user, for a while:
 			// a key removed from GitHub must stop working even if GitHub is down.
 			var ok bool
@@ -147,7 +182,7 @@ func (k *Keys) Refresh() {
 	}
 	k.set(byKey, byUser)
 	k.mu.Lock()
-	k.users, k.emails, k.admins = users, emails, admins
+	k.users, k.emails, k.admins, k.errs = users, emails, admins, errs
 	k.mu.Unlock()
 	if allOK {
 		k.mu.Lock()

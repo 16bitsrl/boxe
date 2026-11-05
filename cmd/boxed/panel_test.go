@@ -421,10 +421,14 @@ func TestPanelHost(t *testing.T) {
 	os.WriteFile(b.backupConf, nil, 0o600)
 	start := time.Now().Add(-3 * time.Hour)
 	os.WriteFile(b.backupLast, []byte(fmt.Sprint(start.Add(-40*time.Hour).Unix())), 0o644)
-	os.WriteFile(b.backupStatus, []byte(fmt.Sprintf(`{"start":%d,"end":%d,"failed":["nap"]}`, start.Unix(), start.Add(25*time.Minute).Unix())), 0o644)
+	os.WriteFile(b.backupStatus, []byte(fmt.Sprintf(`{"start":%d,"end":%d,"failed":["nap"],"size":3221225472}`, start.Unix(), start.Add(25*time.Minute).Unix())), 0o644)
 	b.keys.mu.Lock()
 	b.keys.users = []string{"alice", "bob", "dave", "carol"}
+	b.keys.errs = map[string]keyError{"carol": {Err: "github: 404 Not Found", Since: time.Now().Add(-3 * time.Hour)}}
 	b.keys.mu.Unlock()
+	pt.c.host.mu.Lock()
+	pt.c.host.zpool = "  pool: boxe\n state: DEGRADED\nstatus: One or more devices could not be used.\n"
+	pt.c.host.mu.Unlock()
 
 	member := pt.browser("member")
 	if code, page := member.page("/host"); code != 404 || strings.Contains(page, `href="/host"`) {
@@ -439,6 +443,9 @@ func TestPanelHost(t *testing.T) {
 		"backup older than 36h", // what /healthz says
 		"alice@example.com", "carol", "admin",
 		"25m", ">nap<", start.Local().Format("2006-01-02 15:04"),
+		"3.0G", // the repository
+		"ZFS pool not healthy (DEGRADED)",
+		"GitHub: 404 Not Found, for 3h",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("no %q in:\n%s", want, page)
