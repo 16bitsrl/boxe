@@ -52,3 +52,9 @@ they are installed separately, as the README explains.
 The website (site/) uses the fonts Archivo and JetBrains Mono, under the SIL
 Open Font License 1.1 (site/fonts/OFL-Archivo.txt,
 site/fonts/OFL-JetBrainsMono.txt).
+
+boxed serves ghostty-web by Coder, under the MIT License, for the web
+terminal: https://github.com/coder/ghostty-web (release 0.4.0). The files are
+in cmd/boxed/term/ with its license (ghostty-web-LICENSE); ghostty-web.js is
+modified only to drop the copy of the WebAssembly module it inlines, which
+boxed serves as ghostty-vt.wasm instead.

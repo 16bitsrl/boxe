@@ -139,6 +139,12 @@ before you trust it with anything.
   with access) only. It starts on
   first use. Agents in the VM use it with `DISPLAY=:1`, for example to try a
   UI in a real browser while you watch.
+- **Terminal**: `https://<vm>--term.<domain>` is a terminal in the VM in the
+  browser (ghostty-web), for its owner and the members with access, with no
+  SSH client to set up. It attaches to the VM's `scroll` session (`main`,
+  or `?s=<name>` for another), the same one `scroll` opens over SSH: close
+  the tab, or let boxed restart, and the shell keeps running; the page
+  reconnects to it by itself.
 - **Share links**: `ssh boxe share <vm> [port]` prints a link that shows that
   port of the VM to anyone who has it, without logging in. `unshare` makes
   the VM's links stop working; deleting the VM does too.
@@ -180,14 +186,17 @@ before you trust it with anything.
   from the newest version.
 - **Panel**: `https://<domain>`, behind team login, lists your VMs and those you
   may use (all of them for an admin) with their links and usage, charts of their CPU, RAM
-  and disk over 24 hours, 7 or 30 days, and shows your account: the SSH keys
+  and disk over the last hour, 24 hours, 7 or 30 days, and shows your account: the SSH keys
   boxe lets in, how to set up SSH, and logging out everywhere. Members make
   new VMs there and copy theirs. The owner of a VM, and an admin, can read
-  its console, restart it or delete it (typing its name); everything else is
+  its console (and follow it as it prints), restart it or delete it (typing its name); everything else is
   done over SSH. Every action shows the `ssh boxe` command that does the
   same, and the panel runs exactly that command. Admins also get a page about the host: what `/healthz`
-  would complain about, CPU, RAM and disk, the team with their keys and VMs,
-  and the last backup run.
+  would complain about, CPU, RAM and disk, the team with their keys and VMs
+  (and since when GitHub fails to give a member's keys, if it does), and the
+  last backup run with the space the backups take. Numbers, states and the
+  last hour's charts update by themselves every 10 seconds while the page is
+  open.
 
 ## Commands
 
@@ -298,8 +307,8 @@ $ curl -X POST https://boxe.example.com/exec -H "Authorization: Bearer boxe_..."
   port, and stop working with `unshare` or when the VM is deleted; a
   visitor who opened one keeps a cookie for 7 days, checked against the
   link at every request.
-- **The agent and the desktop are for who may use the VM.** They are a
-  shell in the VM, like SSH. boxed serves them only to the member whose
+- **The terminal, the agent and the desktop are for who may use the VM.**
+  They are a shell in the VM, like SSH. boxed serves them only to the member whose
   email is next to the GitHub username of the VM's owner, or of a member
   with access, in `/etc/boxe/users`, and refuses requests that change
   something, and WebSockets, unless they come from their own page, so other

@@ -97,12 +97,22 @@
 
     <article class="tile t-desktop c-yellow">
       <code class="frag" data-ui aria-hidden="true">DISPLAY=:1</code>
-      <div class="cap"><h3>A desktop with Chrome</h3><p>In your browser, for the owner only. Agents can use it while you watch.</p></div>
+      <div class="cap"><h3>A desktop with Chrome</h3><p>In your browser, for the owner and who they let in. Agents can use it while you watch.</p></div>
     </article>
 
     <article class="tile t-ttl c-red">
       <code class="frag" data-ui aria-hidden="true">--ttl 2h</code>
       <div class="cap"><h3>Gone when you are done</h3><p>Give a VM a time to live and it deletes itself.</p></div>
+    </article>
+
+    <article class="tile t-term c-ink">
+      <code class="frag frag-url" data-ui aria-hidden="true"><span>quick-fox</span><span>--term</span></code>
+      <div class="cap"><h3>A terminal in your browser</h3><p>No SSH client to set up. Close the tab and the shell keeps running: open it again, or <code>scroll</code> into it over SSH, and you are where you left it.</p></div>
+    </article>
+
+    <article class="tile t-panel c-white">
+      <code class="frag" data-ui aria-hidden="true">1h 24h 7d</code>
+      <div class="cap"><h3>A panel that keeps up</h3><p>Your VMs with their CPU, RAM and disk, live, charted down to the last hour. Every button shows the <code>ssh boxe</code> command it runs.</p></div>
     </article>
   </div>
 </section>
@@ -332,7 +342,7 @@ sudo scripts/build-base.sh boxeuntu:20261030 boxeuntu-20261030</code></pre>
       </div>
       <div>
         <h3>Members trust each other on the web</h3>
-        <p>Any logged-in member can open any VM over HTTPS, and apps get the member's email in <code>X-Box-Email</code>, a header they can trust. Share-link visitors are anonymous: no header. Apps still need CSRF protection against other VMs' pages. SSH, the agent and the desktop are for the VM's owner only.</p>
+        <p>Any logged-in member can open any VM over HTTPS, and apps get the member's email in <code>X-Box-Email</code>, a header they can trust. Share-link visitors are anonymous: no header. Apps still need CSRF protection against other VMs' pages. SSH, the terminal, the agent and the desktop are for the VM's owner and the members they give access to.</p>
       </div>
       <div>
         <h3>The rest is yours</h3>
@@ -351,7 +361,7 @@ sudo scripts/build-base.sh boxeuntu:20261030 boxeuntu-20261030</code></pre>
 <pre><code>git clone https://github.com/16bitsrl/boxe</code></pre>
       <button class="copy" type="button" data-copy="git clone https://github.com/16bitsrl/boxe">Copy</button>
     </div>
-    <p class="credits">boxe is a self-hosted take on <a href="https://exe.dev">exe.dev</a>. Its base image builds on <a href="https://github.com/boldsoftware/exeuntu">exeuntu</a> and ships <a href="https://github.com/boldsoftware/shelley">Shelley</a>, both by Bold Software under the Apache License&nbsp;2.0. The desktop is <a href="https://github.com/kasmtech/KasmVNC">KasmVNC</a> (GPL&nbsp;2.0); the VMs run on <a href="https://www.cloudhypervisor.org">Cloud Hypervisor</a>.</p>
+    <p class="credits">boxe is a self-hosted take on <a href="https://exe.dev">exe.dev</a>. Its base image builds on <a href="https://github.com/boldsoftware/exeuntu">exeuntu</a> and ships <a href="https://github.com/boldsoftware/shelley">Shelley</a>, both by Bold Software under the Apache License&nbsp;2.0. The desktop is <a href="https://github.com/kasmtech/KasmVNC">KasmVNC</a> (GPL&nbsp;2.0), the terminal <a href="https://github.com/coder/ghostty-web">ghostty-web</a> by Coder (MIT); the VMs run on <a href="https://www.cloudhypervisor.org">Cloud Hypervisor</a>.</p>
   </div>
 </section>
 
