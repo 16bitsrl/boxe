@@ -23,8 +23,9 @@ import (
 // Web serves https://<vm>.<domain>, port 8000 of the VM, and
 // https://<vm>--<port>.<domain> for ports 3000-9999, to members of the team
 // logged in on the IdP, and to whoever opens a share link for that host;
-// https://<vm>--agent.<domain> (Shelley) and https://<vm>--desktop.<domain>
-// (noVNC) only to the VM's owner. TLS ends at the proxy in front of boxed.
+// https://<vm>--agent.<domain> (Shelley), https://<vm>--desktop.<domain>
+// (noVNC) and https://<vm>--term.<domain> (term.go) only to the VM's owner
+// and the members with access. TLS ends at the proxy in front of boxed.
 //
 // VMs are untrusted, so each host has its own host-only session cookie that
 // no other host can read or set. The login happens once on <domain>, which
@@ -54,6 +55,9 @@ type Web struct {
 	images  func() ([]image, error)
 	console func(vm string) (string, error) // what it printed lately
 	api     http.Handler                    // POST /exec (api.go); nil: no API
+	// shell opens a pty in v attached to its scroll session (term.go);
+	// nil: no web terminal.
+	shell func(ctx context.Context, v VM, session string, cols, rows int) (vmTerm, error)
 	// handOff: boxed -front pipes WebSockets, which then outlive a restart
 	// of boxed; upgrade opens them and hands them over (front.go).
 	handOff bool
@@ -208,12 +212,12 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "There is no VM named "+name+".", http.StatusNotFound)
 		return
 	}
-	if port == agentWebPort || port == desktopWebPort {
-		// The agent and the desktop are a shell in the VM: for its owner
+	if port == agentWebPort || port == desktopWebPort || port == termWebPort {
+		// The agent, the desktop and the terminal are a shell in the VM: for its owner
 		// and the members with access only. VM pages are same-site, so one
 		// of them could otherwise post to them, or open a WebSocket, with
 		// their session.
-		what := map[int]string{agentWebPort: "agent", desktopWebPort: "desktop"}[port]
+		what := map[int]string{agentWebPort: "agent", desktopWebPort: "desktop", termWebPort: "terminal"}[port]
 		if !w.mayUse(v, email) {
 			http.Error(rw, "Only "+v.Owner+" and who they gave access to can use the "+what+" of "+v.Name+".", http.StatusForbidden)
 			return
@@ -236,6 +240,10 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if w.busy != nil {
 		w.busy(v.Name, 1)
 		defer w.busy(v.Name, -1)
+	}
+	if port == termWebPort {
+		w.terminal(rw, r, v, email)
+		return
 	}
 	if w.handOff && isUpgrade(r) {
 		w.upgrade(rw, r, v, port, email)
@@ -311,6 +319,9 @@ func (w *Web) vmHost(host string) (name string, port int, ok bool) {
 	}
 	if p == "desktop" {
 		return name, desktopWebPort, true
+	}
+	if p == "term" {
+		return name, termWebPort, true
 	}
 	if len(p) != 4 || p[0] == '0' || strings.Trim(p, "0123456789") != "" {
 		return "", 0, false

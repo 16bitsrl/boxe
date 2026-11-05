@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
@@ -228,6 +229,9 @@ func main() {
 		web.ownerEmail = keys.Email
 		b.panel(web)
 		b.api(web)
+		web.shell = func(ctx context.Context, v VM, session string, cols, rows int) (vmTerm, error) {
+			return b.openShell(ctx, web, v, session, cols, rows)
+		}
 		if *sockets == "" {
 			go func() { log.Fatal(http.ListenAndServe(*httpAddr, web)) }()
 		}

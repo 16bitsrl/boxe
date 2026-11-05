@@ -374,7 +374,8 @@ func (w *Web) vmPage(rw http.ResponseWriter, status int, p panelPage, v vmJSON, 
 	p.Links = []panelLink{{"Web", host(v.Name)}}
 	p.Owns = v.Owner == p.User
 	if p.Owns || w.usable(v, p.User) {
-		p.Links = append(p.Links, panelLink{"Agent", host(v.Name + "--agent")}, panelLink{"Desktop", host(v.Name + "--desktop")})
+		p.Links = append(p.Links, panelLink{"Terminal", host(v.Name + "--term")},
+			panelLink{"Agent", host(v.Name + "--agent")}, panelLink{"Desktop", host(v.Name + "--desktop")})
 	}
 	p.Manage = v.Owner == p.User || p.Admin
 	p.Cmds = map[string]string{"cp": cmdLine(copyCommand(v.Name, p.Form.Name)),
