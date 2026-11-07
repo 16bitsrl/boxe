@@ -4,6 +4,13 @@ What changed in each release of boxe. Versions follow
 [semantic versioning](https://semver.org); until 1.0, a minor version may
 change how boxe is installed or run, and its notes say how to upgrade.
 
+## v0.1.2 (2026-11-07)
+
+- boxed now also deletes the Docker images that old image versions were
+  built from, once those versions are gone: they filled the host's system
+  disk. Admins can run the cleanup at once with `ssh boxe images prune`,
+  which says what it removed.
+
 ## v0.1.1 (2026-11-07)
 
 - `ssh boxe images` shows the version of each image without its name again

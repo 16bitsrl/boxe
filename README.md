@@ -234,6 +234,7 @@ ssh boxe integrations add github <name> --token <token> [--read-only]
 ssh boxe integrations rm <name>
 ssh boxe integrations attach|detach <name> <vm>
 ssh boxe images                            images to start a VM from
+ssh boxe images prune                      an admin: delete now the old images no VM uses
 ssh boxe llm                               your API keys for the models (all your VMs use them)
 ssh -t boxe llm set <anthropic|openai>     add or change a key: it is asked for, without showing it
 ssh boxe llm rm <anthropic|openai>         remove a key
@@ -248,7 +249,7 @@ ssh boxe known-hosts                       line for ~/.ssh/known_hosts
 ```
 
 Add `--json` to a VM command for output a program can read: `ls` and
-`images` print a list, `new`, `cp`, `fork`, `ttl`, `keep-awake` and `egress` the VM, `integrations` a list,
+`images` print a list (`images prune` what it removed), `new`, `cp`, `fork`, `ttl`, `keep-awake` and `egress` the VM, `integrations` a list,
 `share` the link, the others the VM's name and new status, and errors
 `{"error": "..."}`.
 
@@ -560,8 +561,8 @@ Cloudflare, and nothing listens on the internet.
   `systemctl daemon-reload && systemctl restart boxed`.
 - **New base image:** build it under a new name, then point `-base` at it.
   Images are never rebuilt in place, because VMs are clones of them.
-  Existing VMs keep their image. Delete an old image once
-  `zfs list -o clones` shows no VM uses it.
+  Existing VMs keep their image; boxed deletes the old one once no VM
+  uses it (see Other images).
 - **The VM user is `boxedev`** (it was exeuntu's `exedev` until November
   2026). VMs made before keep `exedev` until they are renamed: before
   deploying a `boxed` with `boxedev`, run in each one
@@ -578,10 +579,12 @@ Cloudflare, and nothing listens on the internet.
   `image/laravel/Dockerfile` explains, under names like `<name>-<date>`
   (or `<name>-<date>-2` for a second one that day) next to the base
   image. `ssh boxe new --image <name>` picks the newest. Only admins build
-  images: a Dockerfile runs as root on the host. boxed deletes an older
-  version on its own once no VM uses it; the default image and the newest
-  of each name stay. The Docker images used to build them are not needed
-  afterwards.
+  images: a Dockerfile runs as root on the host. Every minute boxed
+  deletes an older version once no VM uses it, and the Docker image it was
+  built from (`<name>:<date>`); the default image and the newest of each
+  name stay, and so does a Docker image newer than every version of its
+  name, which may still be on its way. `ssh boxe images prune` does it at
+  once and says what it removed.
 - **Backups:**
   - Every night `boxe-backup.timer` saves the state (database, keys, host
     CA, `/etc/boxe`) and every VM disk as a raw image to any restic

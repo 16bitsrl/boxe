@@ -38,6 +38,7 @@ type fakeHost struct {
 	origin    map[string]string                // clone -> snapshot it was made from
 	images    []string                         // snapshots under the images dataset
 	sources   map[string]string                // image snapshot -> its boxe:source
+	builds    []string                         // Docker images on the host, as repository:tag
 	mem       map[string]int64                 // unit -> RAM it takes, in bytes
 	disk      string                           // zfs list of the VM disks: name, referenced
 	onSSH     func()                           // runs once, when something next waits for a VM's sshd
@@ -199,6 +200,16 @@ func (f *fakeHost) exec(_ time.Duration, name string, args ...string) ([]byte, e
 			out = append(out, snap+"\t"+v)
 		}
 		return []byte(strings.Join(out, "\n") + "\n"), nil
+	case strings.HasPrefix(cmd, "docker images"):
+		return []byte(strings.Join(f.builds, "\n") + "\n"), nil
+	case strings.HasPrefix(cmd, "docker rmi"):
+		kept := f.builds[:0]
+		for _, b := range f.builds {
+			if b != args[len(args)-1] {
+				kept = append(kept, b)
+			}
+		}
+		f.builds = kept
 	case strings.HasPrefix(cmd, "zfs get -H -o value origin"):
 		if o := f.origin[args[len(args)-1]]; o != "" {
 			return []byte(o + "\n"), nil

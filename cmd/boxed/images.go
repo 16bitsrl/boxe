@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"os/exec"
 	"path"
 	"regexp"
 	"sort"
@@ -145,21 +147,28 @@ func (h *Hypervisor) snapshot(version string) string {
 	return h.imageParent() + "/" + version + "@base"
 }
 
-// pruneImages deletes the image versions nobody can pick any more (not the
+// pruneImages deletes the image versions nobody can pick any more, then the
+// Docker images they were built from; it returns what it removed.
+func (b *Box) pruneImages() (images, builds []string) {
+	images = b.pruneVersions()
+	return images, b.hv.pruneBuilds()
+}
+
+// pruneVersions deletes the image versions nobody can pick any more (not the
 // default, not the newest of their name) once no VM uses them.
-func (b *Box) pruneImages() {
+func (b *Box) pruneVersions() (removed []string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	h := b.hv
 	versions, err := h.imageVersions()
 	if err != nil {
 		log.Printf("images: %v", err)
-		return
+		return nil
 	}
 	vms, err := b.store.List("")
 	if err != nil {
 		log.Printf("images: %v", err)
-		return
+		return nil
 	}
 	used := map[string]bool{h.BaseSnapshot: true}
 	for _, v := range vms {
@@ -194,5 +203,45 @@ func (b *Box) pruneImages() {
 			continue
 		}
 		log.Printf("images: removed %s, no VM uses it and a newer %s exists", v, name)
+		removed = append(removed, v)
 	}
+	return removed
+}
+
+// pruneBuilds deletes the Docker images (<name>:<version>) whose image
+// version is gone while a newer one of that name exists. One with no image
+// yet, newer than every image of its name, may be a build in progress.
+func (h *Hypervisor) pruneBuilds() (removed []string) {
+	out, err := h.exec(30*time.Second, "docker", "images", "--format", "{{.Repository}}:{{.Tag}}")
+	if err != nil {
+		if !errors.Is(err, exec.ErrNotFound) {
+			log.Printf("images: %v", err)
+		}
+		return nil
+	}
+	versions, err := h.imageVersions()
+	if err != nil {
+		log.Printf("images: %v", err)
+		return nil
+	}
+	exists, newest := map[string]bool{}, map[string]string{}
+	for _, v := range versions {
+		name, _, _ := imageOf(v)
+		exists[v], newest[name] = true, v // oldest first
+	}
+	for _, build := range strings.Fields(string(out)) {
+		repo, tag, _ := strings.Cut(build, ":")
+		v := repo + "-" + tag
+		if name, date, _ := imageOf(v); date == "" || name != repo || exists[v] ||
+			newest[name] == "" || !versionLess(v, newest[name]) {
+			continue
+		}
+		if err := h.run("docker", "rmi", build); err != nil {
+			log.Printf("images: %v", err)
+			continue
+		}
+		log.Printf("images: removed the build %s, its image is gone", build)
+		removed = append(removed, build)
+	}
+	return removed
 }

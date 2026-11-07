@@ -129,3 +129,80 @@ func TestOldImageWithMoreOnItStays(t *testing.T) {
 		t.Errorf("destroyed part of an image with an admin's snapshot on it: %v", c.host.cmds)
 	}
 }
+
+// The Docker images an admin built them from go too, once their image is
+// gone and a newer one of the same name exists: one being built (newer than
+// any image, or with an image still to come) and anything else stay.
+func TestOldBuildsGoWithTheirImage(t *testing.T) {
+	c := newCLI(t, "alice", "dave")
+	c.box.keys.admins = map[string]bool{"dave": true}
+	c.box.hv.BaseSnapshot = "boxe/images/boxeuntu-20261107-2@base"
+	c.host.images = []string{
+		"boxe/images/boxeuntu-20261105-3@base",
+		"boxe/images/boxeuntu-20261107-2@base",
+		"boxe/images/laravel-20261107-2@base",
+	}
+	c.must("alice", "new a1 --image boxeuntu-20261105-3")
+	c.host.builds = []string{
+		"ghcr.io/boldsoftware/exeuntu:latest",
+		"<none>:<none>",
+		"boxeuntu:20261030",
+		"boxeuntu:20261105-3",
+		"boxeuntu:20261107",
+		"boxeuntu:20261107-2",
+		"boxeuntu:20261108",
+		"laravel:20261107",
+		"laravel:20261107-2",
+		"other:20261101",
+		"boxeuntu:latest",
+	}
+
+	if _, errOut, ok := c.run("alice", "images prune"); ok || !strings.Contains(errOut, "admin") {
+		t.Errorf("a member pruned the images: %q", errOut)
+	}
+	if c.host.ran("docker rmi") {
+		t.Fatalf("a member's prune removed builds: %v", c.host.cmds)
+	}
+
+	out := c.must("dave", "images prune")
+	for _, gone := range []string{"boxeuntu:20261030", "boxeuntu:20261107", "laravel:20261107"} {
+		if !c.host.ran("docker rmi " + gone) {
+			t.Errorf("kept %s, whose image is gone", gone)
+		}
+		if !strings.Contains(out, gone) {
+			t.Errorf("prune does not say it removed %s:\n%s", gone, out)
+		}
+	}
+	want := []string{"ghcr.io/boldsoftware/exeuntu:latest", "<none>:<none>", "boxeuntu:20261105-3",
+		"boxeuntu:20261107-2", "boxeuntu:20261108", "laravel:20261107-2", "other:20261101", "boxeuntu:latest"}
+	if strings.Join(c.host.builds, " ") != strings.Join(want, " ") {
+		t.Errorf("builds left: %v\nwant %v", c.host.builds, want)
+	}
+	if c.host.ran("zfs destroy") {
+		t.Errorf("deleted an image in use or the newest: %v", c.host.cmds)
+	}
+
+	// Once its last VM is gone, the old image goes, and its build with it.
+	c.must("alice", "rm a1")
+	out = c.must("dave", "images prune")
+	if !c.host.ran("zfs destroy boxe/images/boxeuntu-20261105-3@base") || !c.host.ran("docker rmi boxeuntu:20261105-3") ||
+		!strings.Contains(out, "boxeuntu-20261105-3") {
+		t.Errorf("the old image or its build stayed:\n%s\n%v", out, c.host.cmds)
+	}
+	if out = c.must("dave", "images prune"); !strings.Contains(out, "Nothing to remove") {
+		t.Errorf("prune with nothing left:\n%s", out)
+	}
+}
+
+// A host without Docker (images built elsewhere) prunes its images all the
+// same.
+func TestPruneWithoutDocker(t *testing.T) {
+	c := newCLI(t, "alice")
+	c.box.hv.BaseSnapshot = "boxe/images/boxeuntu-20261107@base"
+	c.host.images = []string{"boxe/images/boxeuntu-20261105@base", "boxe/images/boxeuntu-20261107@base"}
+	c.host.fail = map[string]bool{"docker": true}
+	images, builds := c.box.pruneImages()
+	if len(images) != 1 || images[0] != "boxeuntu-20261105" || len(builds) != 0 {
+		t.Errorf("pruned %v %v", images, builds)
+	}
+}

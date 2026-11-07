@@ -189,6 +189,7 @@ func (b *Box) help(cmd string) string {
       integrations attach|detach <name> <vm>
     (- as a value reads it from stdin; in the VM: http://<name>.int.SUFFIX/)
   SSH images                            the images new VMs can start from
+  SSH images prune                      an admin: delete now the old images no VM uses
   SSH llm                               your API keys for the models, used by all your VMs
   SSH llm set <anthropic|openai>        add or change a key (asked for; ssh -t hides it)
   SSH llm usage [--days 30]             tokens and cost of your VMs, per model
@@ -302,6 +303,8 @@ func (b *Box) run(w io.Writer, ask func(prompt string) (string, error), user, li
 		err = b.cmdEgress(o, user, args[1:])
 	case args[0] == "integrations":
 		err = b.cmdIntegrations(o, ask, user, args[1:])
+	case args[0] == "images" && len(args) > 1 && args[1] == "prune":
+		err = b.cmdPrune(o, user)
 	case args[0] == "images":
 		err = b.cmdImages(o)
 	case args[0] == "llm":
@@ -580,6 +583,33 @@ func (b *Box) cmdImages(o output) error {
 	}
 	fmt.Fprintf(w, "\nssh %s new --image <name> starts from the newest version.\n", b.name)
 	return w.Flush()
+}
+
+// pruneJSON is the answer of images prune --json.
+type pruneJSON struct {
+	Images []string `json:"images"`
+	Builds []string `json:"builds"`
+}
+
+// cmdPrune does now what boxed does every so often: it deletes the image
+// versions no VM uses and nobody can pick, and the Docker images of those.
+func (b *Box) cmdPrune(o output, user string) error {
+	if !b.keys.Admin(user) {
+		return fmt.Errorf("only an admin can delete images")
+	}
+	images, builds := b.pruneImages()
+	var text strings.Builder
+	for _, v := range images {
+		fmt.Fprintf(&text, "removed the image %s\n", v)
+	}
+	for _, v := range builds {
+		fmt.Fprintf(&text, "removed the build %s\n", v)
+	}
+	if text.Len() == 0 {
+		text.WriteString("Nothing to remove: every old image is in use, or is the newest of its name.\n")
+	}
+	o.print(pruneJSON{append([]string{}, images...), append([]string{}, builds...)}, text.String())
+	return nil
 }
 
 // shareJSON is the answer of share --json.
