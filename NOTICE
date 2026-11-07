@@ -21,6 +21,9 @@ longer installs exe.dev's plugin and removes it if present. cmd/boxeuntu/main.go
 and cmd/boxeuntu/internal/agentconfig are ours. The image no longer includes
 exeuntu's CLI, its OpenCode and pi plugins, nor exe-setup.service.
 
+cmd/boxe-computer, the image's computer use tool, is ours. The image also
+installs xdotool (BSD 3-Clause License), unmodified, from Ubuntu's packages.
+
 The image also includes Shelley by Bold Software, under the Apache License
 2.0, unmodified: https://github.com/boldsoftware/shelley
 image/shelley-socket.conf and image/shelley-service.conf change how it is

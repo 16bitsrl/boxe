@@ -114,6 +114,11 @@
       <code class="frag" data-ui aria-hidden="true">1h 24h 7d</code>
       <div class="cap"><h3>A panel that keeps up</h3><p>Your VMs with their CPU, RAM and disk, live, charted down to the last hour. Every button shows the <code>ssh boxe</code> command it runs.</p></div>
     </article>
+
+    <article class="tile t-computer c-red">
+      <code class="frag frag-lines" data-ui aria-hidden="true"><span>screenshot</span><span>left_click 640 400</span><span>type "hello"</span></code>
+      <div class="cap"><h3>Agents drive the desktop</h3><p>Screenshots, clicks and keys. Claude Code, Codex, OpenCode and pi in the VM get a <code>computer</code> tool, set up for them; from your computer it is one <code>ssh boxe</code> command away.</p></div>
+    </article>
   </div>
 </section>
 
@@ -257,6 +262,7 @@ ssh boxe known-hosts &gt;&gt; ~/.ssh/known_hosts</code></pre>
         <tr class="gap"><th scope="row"><code>sleep &lt;name&gt;</code></th><td>Put a VM to sleep now (if the host has sleep on)</td></tr>
         <tr><th scope="row"><code>wake &lt;name&gt;</code></th><td>Wake a VM up (connecting does too)</td></tr>
         <tr><th scope="row"><code>keep-awake &lt;name&gt; on|off</code></th><td>Never put this VM to sleep</td></tr>
+        <tr class="gap"><th scope="row"><code>computer &lt;name&gt; &lt;action&gt;</code></th><td>Drive the VM's desktop: <code>screenshot</code>, <code>left_click X Y</code>, <code>type</code>, <code>key</code></td></tr>
         <tr class="gap"><th scope="row"><code>share &lt;name&gt; [port]</code></th><td>A link to the VM for anyone (port 8000)</td></tr>
         <tr><th scope="row"><code>unshare &lt;name&gt;</code></th><td>Make the VM's links stop working</td></tr>
       </tbody>

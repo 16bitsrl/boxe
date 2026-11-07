@@ -37,7 +37,7 @@ SH
 	exit
 fi
 
-VERSION=$(date -u +%Y%m%d%H%M%S)-$(git rev-parse --short HEAD 2>/dev/null || echo dev)
+VERSION=$(date -u +%Y%m%d%H%M%S)-$(git describe --tags --always 2>/dev/null || echo dev)
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "dist/boxed-$VERSION" ./cmd/boxed
 scp -q "dist/boxed-$VERSION" scripts/boxe-front.service "$HOST:/tmp/"
 remote "$VERSION" "$FRONT" <<'SH'

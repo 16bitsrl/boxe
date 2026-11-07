@@ -14,7 +14,7 @@ self-hosted take on [exe.dev](https://exe.dev): one Go daemon (`boxed`) on
 one Linux host with KVM and ZFS, and a small companion (`boxed -front`) that
 keeps users' connections open while `boxed` restarts.
 
-[boxe.dev](https://boxe.dev) · [Install](#install) · [Security model](#security-model)
+[boxe.dev](https://boxe.dev) · [Install](#install) · [Security model](#security-model) · [Changelog](CHANGELOG.md)
 
 ```
 $ ssh boxe new
