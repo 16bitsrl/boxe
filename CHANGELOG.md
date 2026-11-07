@@ -4,7 +4,7 @@ What changed in each release of boxe. Versions follow
 [semantic versioning](https://semver.org); until 1.0, a minor version may
 change how boxe is installed or run, and its notes say how to upgrade.
 
-## Unreleased
+## v0.1.1 (2026-11-07)
 
 - `ssh boxe images` shows the version of each image without its name again
   (`20261107`, not `boxeuntu-20261107`) and the boxe release it was built
