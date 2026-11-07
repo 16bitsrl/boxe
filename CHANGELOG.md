@@ -4,6 +4,15 @@ What changed in each release of boxe. Versions follow
 [semantic versioning](https://semver.org); until 1.0, a minor version may
 change how boxe is installed or run, and its notes say how to upgrade.
 
+## Unreleased
+
+- `ssh boxe images` shows the version of each image without its name again
+  (`20261107`, not `boxeuntu-20261107`) and the boxe release it was built
+  from. Build images with `--build-arg BOXE_SOURCE=$(git describe --tags
+  --always)`: `build-base.sh` records it, and the VM finds it in
+  `/etc/boxe-image`. Images built before show `-`. `--json` keeps the full
+  version and adds `source`.
+
 ## v0.1.0 (2026-11-07)
 
 The first versioned release: everything boxe does today.

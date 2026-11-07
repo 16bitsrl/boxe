@@ -37,4 +37,7 @@ rm -f "$MNT/.dockerenv"
 setcap cap_net_raw=+ep "$MNT/usr/bin/ping"
 umount "$MNT"
 zfs snapshot "$DS@base"
+# The boxe the image was built from, for ssh boxe images
+SOURCE=$(docker inspect -f '{{index .Config.Labels "boxe.source"}}' "$IMAGE")
+[ -n "$SOURCE" ] && zfs set boxe:source="$SOURCE" "$DS@base"
 zfs list -o name,used,refer,volsize "$DS"

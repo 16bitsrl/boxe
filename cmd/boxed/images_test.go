@@ -20,22 +20,26 @@ func TestImages(t *testing.T) {
 		"boxe/images/laravel-20261031-2@base",
 		"boxe/images/old@base",
 	}
+	c.host.sources = map[string]string{"boxe/images/boxeuntu-20261029-8@base": "v0.1.0-2-gcd9f842"}
+	// The version without the name again; the boxe it was built from, when
+	// build-base.sh recorded it.
 	out := c.must("alice", "images")
-	for _, want := range []string{"boxeuntu", "boxeuntu-20261029-8", "default", "laravel-20261031-2", "old"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("images: no %q in\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "laravel-20261030") || strings.Contains(out, "boxeuntu-20261029-4") {
-		t.Errorf("images lists old versions:\n%s", out)
+	want := "NAME      VERSION     BUILT FROM\n" +
+		"boxeuntu  20261029-8  v0.1.0-2-gcd9f842  default\n" +
+		"laravel   20261031-2  -\n" +
+		"old       -           -\n"
+	if !strings.HasPrefix(out, want) {
+		t.Errorf("images:\n%s\nwant\n%s", out, want)
 	}
 	var list []struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
+		Source  string `json:"source"`
 		Default bool   `json:"default"`
 	}
 	c.json("alice", "images --json", &list)
-	if len(list) != 3 || list[0].Name != "boxeuntu" || !list[0].Default || list[1].Version != "laravel-20261031-2" || list[1].Default {
+	if len(list) != 3 || list[0].Name != "boxeuntu" || !list[0].Default || list[0].Source != "v0.1.0-2-gcd9f842" ||
+		list[1].Version != "laravel-20261031-2" || list[1].Default || list[1].Source != "" {
 		t.Errorf("images --json: %+v", list)
 	}
 

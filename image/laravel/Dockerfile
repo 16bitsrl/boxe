@@ -1,6 +1,6 @@
 # laravel, an image for Laravel projects: boxeuntu plus PHP, Composer and Node.
 # Build on the host, from a boxeuntu build (docker images boxeuntu):
-#   docker build --build-arg BASE=boxeuntu:<version> -t laravel:<date> image/laravel
+#   docker build --build-arg BASE=boxeuntu:<version> --build-arg BOXE_SOURCE=$(git describe --tags --always) -t laravel:<date> image/laravel
 #   sudo scripts/build-base.sh laravel:<date> laravel-<date>
 # then: ssh boxe new --image laravel
 ARG BASE
@@ -28,3 +28,7 @@ RUN chmod 755 /usr/local/bin/composer && \
     mkdir -p /usr/share/licenses/nodejs && \
     tar -xJf /tmp/node.tar.xz -C /usr/share/licenses/nodejs --strip-components=1 node-v26.13.0-linux-x64/LICENSE && \
     rm /tmp/node.tar.xz && php --version && composer --version && node --version
+# The boxe it was built from, as in boxeuntu.
+ARG BOXE_SOURCE=
+LABEL boxe.source=$BOXE_SOURCE
+RUN printf 'BOXE_SOURCE=%s\n' "$BOXE_SOURCE" > /etc/boxe-image

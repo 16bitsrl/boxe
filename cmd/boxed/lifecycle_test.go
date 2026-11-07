@@ -37,6 +37,7 @@ type fakeHost struct {
 	noModels  bool                             // nobody added a model to Shelley yet
 	origin    map[string]string                // clone -> snapshot it was made from
 	images    []string                         // snapshots under the images dataset
+	sources   map[string]string                // image snapshot -> its boxe:source
 	mem       map[string]int64                 // unit -> RAM it takes, in bytes
 	disk      string                           // zfs list of the VM disks: name, referenced
 	onSSH     func()                           // runs once, when something next waits for a VM's sshd
@@ -188,6 +189,16 @@ func (f *fakeHost) exec(_ time.Duration, name string, args ...string) ([]byte, e
 			}
 		}
 		f.images = kept
+	case strings.HasPrefix(cmd, "zfs get -H -o name,value boxe:source"):
+		var out []string
+		for _, snap := range args[5:] {
+			v := f.sources[snap]
+			if v == "" {
+				v = "-"
+			}
+			out = append(out, snap+"\t"+v)
+		}
+		return []byte(strings.Join(out, "\n") + "\n"), nil
 	case strings.HasPrefix(cmd, "zfs get -H -o value origin"):
 		if o := f.origin[args[len(args)-1]]; o != "" {
 			return []byte(o + "\n"), nil

@@ -1,5 +1,5 @@
 # boxeuntu, the base image of the microVMs: exeuntu (exe.dev, Apache 2.0) plus a layer of ours.
-# Build: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxeuntu ./cmd/boxeuntu && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxe-computer ./cmd/boxe-computer && docker build -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>
+# Build: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxeuntu ./cmd/boxeuntu && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxe-computer ./cmd/boxe-computer && docker build --build-arg BOXE_SOURCE=$(git describe --tags --always) -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>
 # Pinned: a rebuild must not change what VMs get. To update: pull, read what changed, change the digest.
 FROM ghcr.io/boldsoftware/exeuntu@sha256:74db1d70f105846ab63a17aeca503f82309f565ead347ffccd3201ffd047ca36
 
@@ -97,3 +97,7 @@ RUN for f in .config/shelley/AGENTS.md .claude/CLAUDE.md .codex/AGENTS.md .confi
 # Nothing may still name exeuntu's user, nor be left of exe.dev's services.
 RUN [ ! -e /home/exedev ] && [ ! -e /exe.dev ] && ! ls /etc/systemd/system/*/exe-* 2>/dev/null && ! grep -rlwI exedev /etc /home /usr/local/lib/boxe /var/lib/systemd /var/spool 2>/dev/null && \
     ! find / -xdev -lname '*/home/exedev*' 2>/dev/null | grep -q .
+# The boxe it was built from (git describe), for ssh boxe images and for the VM.
+ARG BOXE_SOURCE=
+LABEL boxe.source=$BOXE_SOURCE
+RUN printf 'BOXE_SOURCE=%s\n' "$BOXE_SOURCE" > /etc/boxe-image

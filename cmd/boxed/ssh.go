@@ -564,13 +564,19 @@ func (b *Box) cmdImages(o output) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(o.w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tVERSION\t")
+	fmt.Fprintln(w, "NAME\tVERSION\tBUILT FROM")
 	for _, im := range images {
-		def := ""
-		if im.Default {
-			def = "default"
+		version, source, def := "-", "-", ""
+		if _, date, _ := imageOf(im.Version); date != "" {
+			version = strings.TrimPrefix(im.Version, im.Name+"-")
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", im.Name, im.Version, def)
+		if im.Source != "" {
+			source = im.Source
+		}
+		if im.Default {
+			def = "\tdefault"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s%s\n", im.Name, version, source, def)
 	}
 	fmt.Fprintf(w, "\nssh %s new --image <name> starts from the newest version.\n", b.name)
 	return w.Flush()

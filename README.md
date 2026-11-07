@@ -192,8 +192,9 @@ before you trust it with anything.
   endpoints.
 - **Images**: besides the default image, admins can build others on the host
   (for example `image/laravel/`, with PHP, Composer and Node).
-  `ssh boxe images` lists them and `ssh boxe new --image laravel` starts
-  from the newest version.
+  `ssh boxe images` lists them, with the date of their newest version and
+  the boxe release it was built from, and `ssh boxe new --image laravel`
+  starts from the newest version.
 - **Panel**: `https://<domain>`, behind team login, lists your VMs and those you
   may use (all of them for an admin) with their links and usage, charts of their CPU, RAM
   and disk over the last hour, 24 hours, 7 or 30 days, and shows your account: the SSH keys
@@ -430,8 +431,8 @@ only where nested virtualization is offered (GCP, Azure, AWS C8i/M8i/R8i).
    or anywhere and then copied to `image/`):
    `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxeuntu ./cmd/boxeuntu`
    and `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxe-computer ./cmd/boxe-computer`.
-   Then
-   `docker build -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>`.
+   Then, in the repository (so `ssh boxe images` shows what it was built from)
+   `docker build --build-arg BOXE_SOURCE=$(git describe --tags --always) -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>`.
 5. **Host setup:**
    - `useradd --system --no-create-home --shell /usr/sbin/nologin boxe-vm`.
    - Install `scripts/net-setup.sh` in `/usr/local/sbin`, with

@@ -20,7 +20,8 @@ import (
 type image struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
-	Default bool   `json:"default"` // new VMs start from it without --image
+	Source  string `json:"source,omitempty"` // the boxe it was built from, e.g. v0.1.0-2-gcd9f842
+	Default bool   `json:"default"`          // new VMs start from it without --image
 }
 
 var imageVersion = regexp.MustCompile(`^(.+)-([0-9]{8})(?:-([0-9]+))?$`)
@@ -87,7 +88,35 @@ func (h *Hypervisor) Images() ([]image, error) {
 		}
 		images = append(images, image{Name: name, Version: v, Default: h.snapshot(v) == h.BaseSnapshot})
 	}
+	h.imageSources(images)
 	return images, nil
+}
+
+// imageSources fills in the boxe each image was built from: build-base.sh
+// records it in the boxe:source property of its @base snapshot. Images
+// built before have none.
+func (h *Hypervisor) imageSources(images []image) {
+	if len(images) == 0 {
+		return
+	}
+	args := []string{"get", "-H", "-o", "name,value", "boxe:source"}
+	for _, im := range images {
+		args = append(args, h.snapshot(im.Version))
+	}
+	out, err := h.exec(10*time.Second, "zfs", args...)
+	if err != nil {
+		log.Printf("images: %v: %s", err, out)
+		return
+	}
+	sources := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if snap, v, ok := strings.Cut(line, "\t"); ok && v != "-" {
+			sources[snap] = v
+		}
+	}
+	for i := range images {
+		images[i].Source = sources[h.snapshot(images[i].Version)]
+	}
 }
 
 // Image is the snapshot to clone for name: an exact version, or the
