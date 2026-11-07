@@ -79,7 +79,8 @@ func TestConfigArchive(t *testing.T) {
 	}
 	agents := check("home/boxedev/.config/boxe/AGENTS.md", 0o644, vmUID, tar.TypeReg).contents
 	for _, want := range []string{"https://quick-fox.boxe.example", "https://quick-fox--<port>.boxe.example", "ssh boxe help",
-		"http://<integration>.int.boxe/", "git clone http://github.int.boxe/OWNER/REPO", "ssh boxe egress"} {
+		"http://<integration>.int.boxe/", "git clone http://github.int.boxe/OWNER/REPO", "ssh boxe egress",
+		"https://quick-fox--desktop.boxe.example", "MCP tool `computer`", "boxe-computer screenshot --out /tmp/screen.png", "DISPLAY=:1"} {
 		if !strings.Contains(agents, want) {
 			t.Errorf("AGENTS.md lacks %q", want)
 		}

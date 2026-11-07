@@ -10,7 +10,7 @@ import (
 
 // commands are what tab completes first at the prompt.
 var commands = []string{"new", "ls", "rm", "cp", "fork", "ttl", "restart", "sleep", "wake", "keep-awake",
-	"share", "unshare", "access", "exec", "egress", "integrations", "images", "llm", "token", "ssh-config", "known-hosts", "whoami", "help", "exit"}
+	"share", "unshare", "access", "exec", "computer", "egress", "integrations", "images", "llm", "token", "ssh-config", "known-hosts", "whoami", "help", "exit"}
 
 // prompt is `ssh boxe` from a terminal: one command after another, with
 // history and tab completion, until exit or ctrl-d.
@@ -63,6 +63,10 @@ func (b *Box) complete(user, line string, pos int) (string, int, bool) {
 		options = []string{"add", "rm", "attach", "detach", "ls"}
 	case len(prev) == 2 && prev[0] == "integrations" && prev[1] == "add":
 		options = []string{kindHTTP, kindGitHub}
+	case len(prev) == 2 && prev[0] == "computer":
+		for _, a := range computerActions {
+			options = append(options, a.name)
+		}
 	case len(prev) == 2 && prev[0] == "egress":
 		options = []string{egressAll, egressIntegrations}
 	case integration:

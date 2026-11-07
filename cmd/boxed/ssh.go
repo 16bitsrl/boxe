@@ -180,6 +180,7 @@ func (b *Box) help(cmd string) string {
   SSH unshare <name>                    make the VM's links stop working
   SSH access <name> [add|rm <member>]   let other members use a VM (or the whole team: team)
   SSH exec <name> <command>             run a command in a VM, as ssh <name>.SUFFIX <command> does
+  SSH computer <name> <action>          drive the VM's desktop: screenshot, left_click, type, key...
   SSH egress <name> all|integrations    let the VM reach the internet, or only its integrations
   SSH integrations                      your API secrets, which VMs use without seeing them:
       integrations add http <name> --target <url> [--header 'Name: value']
@@ -226,6 +227,9 @@ func (b *Box) session(s ssh.Session) {
 		// A command run in a VM exits as it did there, as with ssh <vm>.
 		var status exitStatus
 		if errors.As(err, &status) {
+			if _, bare := err.(exitStatus); !bare {
+				fmt.Fprintln(s.Stderr(), "error:", err)
+			}
 			s.Exit(int(status))
 			return
 		}
@@ -249,6 +253,10 @@ func (b *Box) run(w io.Writer, ask func(prompt string) (string, error), user, li
 	// --agent included.
 	if l.command == "exec" {
 		return b.cmdExec(w, user, line)
+	}
+	// So does computer, for the text it types.
+	if l.command == "computer" {
+		return b.cmdComputer(w, user, line)
 	}
 	args, agent, hasAgent := l.args, l.agent, l.hasAgent
 	o := output{w: w, json: l.json}

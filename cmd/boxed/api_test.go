@@ -306,12 +306,13 @@ func TestAdminManagesOthersVMs(t *testing.T) {
 // The prompt completes the new commands too.
 func TestPromptKnowsNewCommands(t *testing.T) {
 	c := newCLI(t, "alice")
-	for _, cmd := range []string{"exec", "token"} {
+	for _, cmd := range []string{"exec", "token", "computer"} {
 		if line, _, ok := c.box.complete("alice", cmd[:3], 3); !ok || line != cmd+" " {
 			t.Errorf("%s: %q %v", cmd[:3], line, ok)
 		}
 	}
-	if h := c.must("alice", "help"); !strings.Contains(h, "exec <name> <command>") || !strings.Contains(h, "token new") {
+	if h := c.must("alice", "help"); !strings.Contains(h, "exec <name> <command>") || !strings.Contains(h, "token new") ||
+		!strings.Contains(h, "computer <name> <action>") {
 		t.Errorf("help:\n%s", h)
 	}
 }

@@ -1,6 +1,5 @@
 [Unit]
-Description=boxe: set the coding agents up for the models' gateway
-ConditionPathExists=/etc/boxe/llm-gateway
+Description=boxe: set the coding agents up for the models' gateway and the computer tools
 After=network.target
 
 [Service]

@@ -30,3 +30,4 @@ tsnet/
 
 # Built into the image (image/Dockerfile)
 /image/boxeuntu
+/image/boxe-computer

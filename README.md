@@ -139,6 +139,16 @@ before you trust it with anything.
   with access) only. It starts on
   first use. Agents in the VM use it with `DISPLAY=:1`, for example to try a
   UI in a real browser while you watch.
+- **Computer use**: agents can also see and drive the desktop themselves.
+  Claude Code, Codex, OpenCode and pi in the VM get an MCP tool, `computer`;
+  Shelley and scripts use the `boxe-computer` command (`boxe-computer
+  screenshot --out /tmp/screen.png`, `boxe-computer left_click 640 400`).
+  From outside, for the same people as the desktop:
+  `ssh boxe computer <vm> screenshot > screen.png`, then
+  `ssh boxe computer <vm> left_click 640 400`, `... type hello`,
+  `... key ctrl+l`. Coordinates are pixels of the last screenshot, which is
+  scaled to fit 1280x800 (`--full` for the real size); after the screen
+  changes size, take a new one. The desktop starts by itself.
 - **Terminal**: `https://<vm>--term.<domain>` is a terminal in the VM in the
   browser (ghostty-web), for its owner and the members with access, with no
   SSH client to set up. It attaches to the VM's `scroll` session (`main`,
@@ -149,8 +159,8 @@ before you trust it with anything.
   port of the VM to anyone who has it, without logging in. `unshare` makes
   the VM's links stop working; deleting the VM does too.
 - **Access**: `ssh boxe access <vm> add <member>` lets another member use a
-  VM as its owner does: SSH, `exec`, waking it up, the agent and the desktop;
-  `add team` lets in every member, `rm` takes access away, `access <vm>`
+  VM as its owner does: SSH, `exec`, waking it up, the agent, the desktop
+  and `computer`; `add team` lets in every member, `rm` takes access away, `access <vm>`
   shows who has it. The VM shows up in their `ls` and panel. Managing it
   (`rm`, `restart`, `ttl`, `share`, `egress`, integrations, `cp`) stays the
   owner's. Inside the VM, sshd asks boxed for the keys that may log in
@@ -215,6 +225,7 @@ ssh boxe share <name> [port]               a link to the VM for anyone (port 800
 ssh boxe unshare <name>                    make the VM's links stop working
 ssh boxe access <name> [add|rm <member>]   let other members use a VM (or every member: team)
 ssh boxe exec <name> <command>             run a command in a VM and print what it printed
+ssh boxe computer <name> <action> [args]   drive the VM's desktop: screenshot, left_click, type, key...
 ssh boxe egress <name> all|integrations     let the VM reach the internet, or only its integrations
 ssh boxe integrations                      your integrations: API secrets your VMs use without seeing them
 ssh boxe integrations add http <name> --target <url> [--header 'Name: value']
@@ -253,6 +264,18 @@ and the API: the command runs as `boxedev`, the VM wakes up first if it
 sleeps, it may run for 5 minutes, and boxe exits with its exit status. The
 rest of the line goes to the VM's shell as typed, `--json` included.
 
+`ssh boxe computer <name> <action> [args]` takes the actions of Anthropic's
+computer use tool: `screenshot [--full]`, `zoom X0 Y0 X1 Y1`,
+`left_click|right_click|middle_click|double_click|triple_click [X Y] [--mod ctrl+shift]`,
+`left_click_drag X0 Y0 X1 Y1`, `mouse_move X Y`, `left_mouse_down`,
+`left_mouse_up`, `cursor_position`, `scroll up|down|left|right [N] [X Y]`,
+`type TEXT`, `key COMBO... [--repeat N]`, `hold_key COMBO SECONDS` and
+`wait SECONDS` (`left-click` works too). A screenshot is a PNG on stdout
+(boxe refuses to print it on a terminal); with `--json` every action prints
+JSON, the screenshot as base64. Everything after `type` is the text, as
+typed, a `--json` at its end included. VMs made from an older image have no
+`boxe-computer`: boxe says so and exits with status 3.
+
 `ssh boxe` alone, from a terminal, opens a prompt: type the commands
 without `ssh boxe`, with history and tab completion of commands and of your
 VM names. `exit` or ctrl-d leaves it. From a script, `ssh boxe` prints the
@@ -276,17 +299,21 @@ Every command also works over HTTPS: POST the command line, as typed after
 $ ssh boxe token new --label ci --exp 90d --cmds ls,new,exec
 $ curl -X POST https://boxe.example.com/exec -H "Authorization: Bearer boxe_..." -d 'new --json'
 $ curl -X POST https://boxe.example.com/exec -H "Authorization: Bearer boxe_..." -d 'exec quick-fox uptime'
+$ curl -X POST https://boxe.example.com/exec -H "Authorization: Bearer boxe_..." -d 'computer quick-fox screenshot' -o screen.png
 ```
 
 - The command runs as the token's member, as over SSH, and the answer is
-  what it printed (`text/plain`). Add `--json` for JSON.
+  what it printed (`text/plain`; a screenshot `image/png`). Add `--json`
+  for JSON.
 - Status: 200 when it worked; 400 when boxe refused it (a mistake, a VM
   that is not yours) and 500 when it failed on the host, with the error as
   the body; 401 without a valid token, 403 when the token may not run that
-  command or its member left the team. `exec` answers 422 when the command
-  in the VM failed, and `X-Exit-Status` has its exit status.
+  command or its member left the team. `exec` and `computer` answer 422
+  when the command in the VM failed, and `X-Exit-Status` has its exit
+  status.
 - Tokens last 30 days unless `--exp` says otherwise (at most 365 days).
-  `--cmds` limits what they may run. They never make, list or delete
+  `--cmds` limits what they may run (`computer` can open a terminal on the
+  desktop: it is as strong as `exec`). They never make, list or delete
   tokens: that is done over SSH only. boxe keeps only a hash of each token,
   so a lost token cannot be shown again: make another.
 - Removing someone from `/etc/boxe/users` stops their tokens at once.
@@ -399,8 +426,10 @@ only where nested virtualization is offered (GCP, Azure, AWS C8i/M8i/R8i).
    ```
    That path is `boxed`'s default; a kernel elsewhere needs `-kernel`.
 4. **Base image:** first `boxeuntu`, the image's tool for its coding
-   agents, with Go (on the host, or anywhere and then copied to `image/`):
-   `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxeuntu ./cmd/boxeuntu`.
+   agents, and `boxe-computer`, their computer tools, with Go (on the host,
+   or anywhere and then copied to `image/`):
+   `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxeuntu ./cmd/boxeuntu`
+   and `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxe-computer ./cmd/boxe-computer`.
    Then
    `docker build -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>`.
 5. **Host setup:**

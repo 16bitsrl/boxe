@@ -1,8 +1,11 @@
 // Package agentconfig sets the coding agents of a VM up for the boxe LLM
 // gateway: the host adds the owner's API key to their requests. Claude
-// Code needs nothing: it reads ANTHROPIC_BASE_URL, which login shells get.
-// Codex, OpenCode and pi do not, so they get a config file each, for the
-// providers the owner has a key for.
+// Code needs nothing for it: it reads ANTHROPIC_BASE_URL, which login
+// shells get. Codex, OpenCode and pi do not, so they get a config file
+// each, for the providers the owner has a key for.
+//
+// Every agent also gets the computer tools (the MCP server "computer",
+// boxe-computer), with or without a gateway.
 //
 // A file is ours while it holds what we last wrote (its hash is kept in a
 // state file): once the user changes it, it is theirs and left alone.
@@ -25,7 +28,11 @@ import (
 )
 
 // GatewayFile holds the gateway's URL, written by the host in every VM.
-const GatewayFile = "/etc/boxe/llm-gateway"
+var GatewayFile = "/etc/boxe/llm-gateway"
+
+// ComputerBin drives the VM's desktop: the agents run it as the MCP server
+// "computer". Images older than it do not have it.
+var ComputerBin = "/usr/local/bin/boxe-computer"
 
 // The models OpenCode starts with: it has no default of its own for them.
 const (
@@ -80,21 +87,32 @@ type File struct {
 	Content []byte
 }
 
-// Files are the config files for g.
-func Files(g Gateway) []File {
-	return []File{
-		{"codex", ".codex/config.toml", codexConfig(g)},
-		{"opencode", ".config/opencode/opencode.json", openCodeConfig(g)},
+// Files are the config files for g, with the computer tools if computer.
+// A zero g (no gateway) gives the computer tools alone.
+func Files(g Gateway, computer bool) []File {
+	files := []File{
+		{"codex", ".codex/config.toml", codexConfig(g, computer)},
+		{"opencode", ".config/opencode/opencode.json", openCodeConfig(g, computer)},
 		{"pi", ".pi/agent/models.json", piModels(g)},
 	}
+	if computer {
+		// pi keeps its MCP servers in a file of their own.
+		files = append(files, File{"pi", ".pi/agent/mcp.json", jsonFile(map[string]any{
+			"mcpServers": map[string]any{"computer": map[string]any{"command": ComputerBin, "args": []string{"mcp"}}},
+		})})
+	}
+	return files
 }
 
-func codexConfig(g Gateway) []byte {
-	if !g.OpenAI {
+func codexConfig(g Gateway, computer bool) []byte {
+	if !g.OpenAI && !computer {
 		return nil
 	}
-	return []byte(`# Written by boxeuntu: OpenAI models through the boxe gateway, which adds
-# your key. Change this file and boxeuntu leaves it alone.
+	var b strings.Builder
+	b.WriteString("# Written by boxeuntu. Change this file and boxeuntu leaves it alone.\n")
+	if g.OpenAI {
+		b.WriteString(`
+# OpenAI models through the boxe gateway, which adds your key.
 model_provider = "boxe"
 
 [model_providers.boxe]
@@ -102,9 +120,19 @@ name = "boxe"
 base_url = "` + g.URL + `/openai"
 requires_openai_auth = false
 `)
+	}
+	if computer {
+		fmt.Fprintf(&b, `
+# The computer tools: screen, mouse and keyboard of this VM's desktop.
+[mcp_servers.computer]
+command = %q
+args = ["mcp"]
+`, ComputerBin)
+	}
+	return []byte(b.String())
 }
 
-func openCodeConfig(g Gateway) []byte {
+func openCodeConfig(g Gateway, computer bool) []byte {
 	providers := map[string]any{}
 	model := ""
 	if g.OpenAI {
@@ -115,14 +143,21 @@ func openCodeConfig(g Gateway) []byte {
 		providers["anthropic"] = map[string]any{"options": map[string]string{"baseURL": g.URL + "/anthropic/v1", "apiKey": placeholder}}
 		model = openCodeAnthropicModel
 	}
-	if len(providers) == 0 {
+	if len(providers) == 0 && !computer {
 		return nil
 	}
-	return jsonFile(map[string]any{
-		"$schema":  "https://opencode.ai/config.json",
-		"model":    model,
-		"provider": providers,
-	})
+	config := map[string]any{"$schema": "https://opencode.ai/config.json"}
+	if len(providers) > 0 {
+		config["model"] = model
+		config["provider"] = providers
+	}
+	if computer {
+		// The shape opencode mcp add writes since OpenCode 2.
+		config["mcp"] = map[string]any{"servers": map[string]any{
+			"computer": map[string]any{"type": "local", "command": []string{ComputerBin, "mcp"}},
+		}}
+	}
+	return jsonFile(config)
 }
 
 func piModels(g Gateway) []byte {
@@ -244,4 +279,30 @@ func writeFile(path string, content []byte) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// claudeMarker records that Claude Code was given the computer tools once:
+// a user who removes them does not get them back.
+const claudeMarker = ".config/boxeuntu/claude-computer"
+
+// AddClaudeComputer gives Claude Code the computer tools, once. Its user
+// config (~/.claude.json) is also its own state, so only its CLI changes it.
+// claude runs that CLI with args, and is nil when Claude Code is not there.
+// It says "added", "there" (the user had them already), or "" when there
+// was nothing to do.
+func AddClaudeComputer(home string, claude func(args ...string) error) (string, error) {
+	marker := filepath.Join(home, claudeMarker)
+	if _, err := os.Stat(marker); err == nil || claude == nil {
+		return "", nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	status := "there"
+	if claude("mcp", "get", "computer") != nil {
+		if err := claude("mcp", "add", "--scope", "user", "computer", "--", ComputerBin, "mcp"); err != nil {
+			return "", err
+		}
+		status = "added"
+	}
+	return status, writeFile(marker, nil)
 }

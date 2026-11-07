@@ -1,5 +1,5 @@
 # boxeuntu, the base image of the microVMs: exeuntu (exe.dev, Apache 2.0) plus a layer of ours.
-# Build: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxeuntu ./cmd/boxeuntu && docker build -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>
+# Build: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxeuntu ./cmd/boxeuntu && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxe-computer ./cmd/boxe-computer && docker build -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>
 # Pinned: a rebuild must not change what VMs get. To update: pull, read what changed, change the digest.
 FROM ghcr.io/boldsoftware/exeuntu@sha256:74db1d70f105846ab63a17aeca503f82309f565ead347ffccd3201ffd047ca36
 
@@ -49,7 +49,8 @@ RUN chmod 755 /usr/local/bin/exe-scroll /usr/local/bin/scroll
 # A desktop with a browser, for agents that try UIs while their user watches:
 # KasmVNC (an X server that is also the desktop in the browser), openbox,
 # xterm, Google Chrome (the browser agents' tools use by default), at
-# https://<vm>--desktop.<domain>. It starts on first use.
+# https://<vm>--desktop.<domain>. It starts on first use. Agents drive it
+# with boxe-computer: screenshots, and mouse and keyboard through xdotool.
 # Chrome comes from Google's repository under Google's terms, at its latest
 # version when the image is built. KasmVNC is pinned like the base image.
 ADD --checksum=sha256:89a5d1fbe9e032b122202be158a2b25f15c97e0a5b8dcf92a5e6835c7b7b2acd \
@@ -59,7 +60,7 @@ RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor
         > /etc/apt/sources.list.d/google-chrome.list && \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        google-chrome-stable /tmp/kasmvnc.deb openbox xterm fonts-noto-color-emoji && \
+        google-chrome-stable /tmp/kasmvnc.deb openbox xterm fonts-noto-color-emoji xdotool && \
     rm -rf /var/lib/apt/lists/* /tmp/kasmvnc.deb
 COPY boxe-desktop.sh /usr/local/lib/boxe/desktop.sh
 COPY boxe-desktop.service boxe-desktop-web.service boxe-desktop-web.socket /etc/systemd/system/
@@ -75,20 +76,22 @@ RUN sed -i '/^# Print exe.dev message/,$d' /home/boxedev/.bashrc && \
     usermod -c "boxe user" boxedev
 # The coding agents: boxeuntu (ours, forked from exeuntu's CLI) updates them
 # and sets them up for the boxe gateway, at boot and when the owner's keys
-# change. Out: what exeuntu has for exe.dev's own services (its CLI, the
-# OpenCode and pi plugins for its gateway, the unit for its setup scripts).
+# change, and gives them the computer tools of boxe-computer. Out: what
+# exeuntu has for exe.dev's own services (its CLI, the OpenCode and pi
+# plugins for its gateway, the unit for its setup scripts).
 COPY boxeuntu /usr/local/bin/boxeuntu
+COPY boxe-computer /usr/local/bin/boxe-computer
 COPY boxe-agents.service /etc/systemd/system/boxe-agents.service
-RUN chmod 755 /usr/local/bin/boxeuntu && \
+RUN chmod 755 /usr/local/bin/boxeuntu /usr/local/bin/boxe-computer && \
     systemctl disable exe-setup.service && \
     rm -rf /usr/local/bin/exeuntu /etc/opencode/plugins /home/boxedev/.pi/agent/extensions/exe-dev \
         /etc/systemd/system/exe-setup.service && \
     systemctl enable boxe-agents.service
 # Instructions for the coding agents in the image (Claude, Codex, opencode,
-# Shelley): exeuntu's describe exe.dev. boxed writes ours, with this
+# pi, Shelley): exeuntu's describe exe.dev. boxed writes ours, with this
 # installation's addresses, through the configuration disk.
 RUN install -d -o 1000 -g 1000 /home/boxedev/.config/boxe
-RUN for f in .config/shelley/AGENTS.md .claude/CLAUDE.md .codex/AGENTS.md .config/opencode/AGENTS.md; do \
+RUN for f in .config/shelley/AGENTS.md .claude/CLAUDE.md .codex/AGENTS.md .config/opencode/AGENTS.md .pi/agent/AGENTS.md; do \
         ln -sfn /home/boxedev/.config/boxe/AGENTS.md /home/boxedev/$f; \
     done
 # Nothing may still name exeuntu's user, nor be left of exe.dev's services.

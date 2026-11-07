@@ -220,6 +220,26 @@ func (e exitStatus) Error() string { return "exit status " + strconv.Itoa(int(e)
 
 var execLine = regexp.MustCompile(`(?s)^\s*exec\s+(\S+)\s+(\S.*)$`)
 
+// reach wakes up the VM name, if user may use it, to run a command in it:
+// the VM and its own host key, read with the VM under the lock (a VM that
+// takes its name and address after it is deleted has another).
+func (b *Box) reach(user, name string) (VM, string, error) {
+	if _, err := b.usable(user, name); err != nil {
+		return VM{}, "", err
+	}
+	if err := b.wake(user, name); err != nil {
+		return VM{}, "", err
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	v, err := b.usable(user, name)
+	if err != nil {
+		return VM{}, "", err
+	}
+	hostKey, err := b.hv.hostKey(v.Name)
+	return v, hostKey, err
+}
+
 // cmdExec is `exec <name> <command>`: the command runs in the member's VM
 // as boxedev, as with `ssh <name>.boxe <command>`, and what it printed comes
 // back. The command is the rest of the line as typed, for the VM's shell.
@@ -229,21 +249,7 @@ func (b *Box) cmdExec(w io.Writer, user, line string) error {
 		return fmt.Errorf("usage: ssh %s exec <name> <command>", b.name)
 	}
 	name, cmd := m[1], strings.TrimSpace(m[2])
-	if _, err := b.usable(user, name); err != nil {
-		return err
-	}
-	if err := b.wake(user, name); err != nil {
-		return err
-	}
-	// The VM's own host key, read with the VM under the lock: a VM that
-	// takes its name and address after it is deleted has another.
-	b.mu.RLock()
-	v, err := b.usable(user, name)
-	var hostKey string
-	if err == nil {
-		hostKey, err = b.hv.hostKey(v.Name)
-	}
-	b.mu.RUnlock()
+	v, hostKey, err := b.reach(user, name)
 	if err != nil {
 		return err
 	}
@@ -340,11 +346,20 @@ func (b *Box) serveAPI(rw http.ResponseWriter, r *http.Request) {
 	default:
 		code, exit = http.StatusBadRequest, 1
 	}
-	if err != nil && status == 0 && !l.json {
+	asJSON := l.json
+	if l.command == "computer" {
+		c, _ := parseComputer(b.name, line)
+		asJSON = c.json
+	}
+	// What exec ran printed its own failure; computer's is a message.
+	if _, bare := err.(exitStatus); err != nil && !bare && !asJSON {
 		fmt.Fprintln(&out, "error:", err)
 	}
 	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	if l.command == "exec" {
+	if l.command == "computer" && err == nil && !asJSON && http.DetectContentType(out.Bytes()) == "image/png" {
+		rw.Header().Set("Content-Type", "image/png")
+	}
+	if l.command == "exec" || l.command == "computer" {
 		rw.Header().Set("X-Exit-Status", strconv.Itoa(exit))
 	}
 	rw.WriteHeader(code)
