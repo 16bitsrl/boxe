@@ -232,6 +232,8 @@ func (f *fakeHost) exec(_ time.Duration, name string, args ...string) ([]byte, e
 		return []byte(`{"conversation_id":"cid1","slug":"fix-the-bug"}` + "\n"), nil
 	case name == "ssh" && f.inVM != nil:
 		return f.inVM(args[len(args)-1])
+	case strings.HasSuffix(name, "boxe-build-base"): // <docker image> <dataset>
+		f.images = append(f.images, args[1]+"@base")
 	case name == "ch-remote":
 		// ch-remote --api-socket <sock> <command> [url]
 		u := unit(filepath.Base(filepath.Dir(args[1])))

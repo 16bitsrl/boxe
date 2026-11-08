@@ -235,6 +235,8 @@ ssh boxe integrations rm <name>
 ssh boxe integrations attach|detach <name> <vm>
 ssh boxe images                            images to start a VM from
 ssh boxe images prune                      an admin: delete now the old images no VM uses
+ssh boxe images update                     an admin: download now a newer official image, if any
+ssh boxe images default <version>          an admin: the image new VMs start from without --image
 ssh boxe llm                               your API keys for the models (all your VMs use them)
 ssh -t boxe llm set <anthropic|openai>     add or change a key: it is asked for, without showing it
 ssh boxe llm rm <anthropic|openai>         remove a key
@@ -404,7 +406,7 @@ only where nested virtualization is offered (GCP, Azure, AWS C8i/M8i/R8i).
 
 1. **Host:** `/dev/kvm`, a ZFS pool (`zpool create boxe /dev/...`, then
    `zfs create boxe/vms`, `zfs create boxe/images` and, for sleep and fork,
-   `zfs create boxe/sleep`), Docker (to build the image), `nftables`,
+   `zfs create boxe/sleep`), Docker (to download or build the image), `nftables`,
    `iptables` and `restic` (for backups). On Ubuntu:
    `apt install zfsutils-linux docker.io nftables iptables restic`.
    Cap ZFS's cache, which otherwise takes up to all the RAM the VMs need,
@@ -427,13 +429,19 @@ only where nested virtualization is offered (GCP, Azure, AWS C8i/M8i/R8i).
    install -D -m644 linux/vmlinux /var/lib/boxe/kernels/vmlinux-7.2.8-boxe
    ```
    That path is `boxed`'s default; a kernel elsewhere needs `-kernel`.
-4. **Base image:** first `boxeuntu`, the image's tool for its coding
-   agents, and `boxe-computer`, their computer tools, with Go (on the host,
-   or anywhere and then copied to `image/`):
+4. **Base image:** `boxed` downloads the official one, boxeuntu
+   (`ghcr.io/16bitsrl/boxeuntu`), by itself: 10 minutes after it starts,
+   then every day, or at once with `ssh boxe images update` from an admin.
+   It makes an image of it with `scripts/build-base.sh`, installed as
+   `/usr/local/sbin/boxe-build-base` (`scripts/deploy.sh` installs it).
+   To build boxeuntu yourself instead: first `boxeuntu`, the image's tool
+   for its coding agents, and `boxe-computer`, their computer tools, with
+   Go (on the host, or anywhere and then copied to `image/`):
    `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxeuntu ./cmd/boxeuntu`
    and `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxe-computer ./cmd/boxe-computer`.
    Then, in the repository (so `ssh boxe images` shows what it was built from)
-   `docker build --build-arg BOXE_SOURCE=$(git describe --tags --always) -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>`.
+   `docker build --build-arg BOXE_SOURCE=$(git describe --tags --always) -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>`,
+   and set `-image-updates=` so that no official one replaces it.
 5. **Host setup:**
    - `useradd --system --no-create-home --shell /usr/sbin/nologin boxe-vm`.
    - Install `scripts/net-setup.sh` in `/usr/local/sbin`, with
@@ -457,7 +465,10 @@ only where nested virtualization is offered (GCP, Azure, AWS C8i/M8i/R8i).
      on.
 6. **Settings:** `/etc/boxe/boxed.env` (see `scripts/boxed.env.example` and
    `boxed -help`).
-   - **Image:** `-base boxe/images/boxeuntu-<date>@base`, the image of step 4.
+   - **Image:** new VMs start from the newest official boxeuntu, which
+     `boxed` downloads (step 4; `-image-updates`, empty to turn it off).
+     An image of your own: `-base boxe/images/<name>-<date>@base`; a
+     default that is not boxeuntu is never replaced by an update.
    - **Sleep and fork** are off until you set `-sleep-dir /boxe/sleep`;
      add `-sleep-after 30m` to put unused VMs to sleep.
    - **SSH:** `boxed` joins your [Tailscale](https://tailscale.com) tailnet
@@ -559,10 +570,16 @@ Cloudflare, and nothing listens on the internet.
   same `boxe`. Going back: `systemctl disable --now boxe-front`, put back
   `ExecStart=/usr/local/sbin/boxed $BOXED_FLAGS` (no `-sockets`) and
   `systemctl daemon-reload && systemctl restart boxed`.
-- **New base image:** build it under a new name, then point `-base` at it.
-  Images are never rebuilt in place, because VMs are clones of them.
-  Existing VMs keep their image; boxed deletes the old one once no VM
-  uses it (see Other images).
+- **New base image:** boxed downloads every new official boxeuntu within
+  a day and makes it the default for new VMs; the host page of the panel
+  shows the image and its updates. If a new one gives trouble, an admin
+  goes back with `ssh boxe images default boxeuntu-<date>` (the version
+  before stays on the host for that): updates leave that choice be until a
+  newer version is published. With an image built here, build it under a
+  new name and point `-base` at it (pointing `-base` elsewhere undoes an
+  update's or an admin's choice). Images are never rebuilt in place,
+  because VMs are clones of them. Existing VMs keep their image; boxed
+  deletes the old one once no VM uses it (see Other images).
 - **The VM user is `boxedev`** (it was exeuntu's `exedev` until November
   2026). VMs made before keep `exedev` until they are renamed: before
   deploying a `boxed` with `boxedev`, run in each one
@@ -581,9 +598,12 @@ Cloudflare, and nothing listens on the internet.
   image. `ssh boxe new --image <name>` picks the newest. Only admins build
   images: a Dockerfile runs as root on the host. Every minute boxed
   deletes an older version once no VM uses it, and the Docker image it was
-  built from (`<name>:<date>`); the default image and the newest of each
-  name stay, and so does a Docker image newer than every version of its
-  name, which may still be on its way. `ssh boxe images prune` does it at
+  built from (`<name>:<date>`). These stay: the default image, the version
+  of its name just before it (to go back to), the image `-base` names, the
+  newest version of each name, and a Docker image newer than every version
+  of its name, which may still be on its way. A downloaded image keeps no
+  copy in Docker: to build an image from it, as laravel is, use
+  `--build-arg BASE=ghcr.io/16bitsrl/boxeuntu:<date>`. `ssh boxe images prune` does it at
   once and says what it removed.
 - **Backups:**
   - Every night `boxe-backup.timer` saves the state (database, keys, host

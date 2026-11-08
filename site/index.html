@@ -278,7 +278,7 @@ ssh boxe known-hosts &gt;&gt; ~/.ssh/known_hosts</code></pre>
       <li><code>/dev/kvm</code> and a ZFS pool</li>
       <li>Cloud Hypervisor v54 or later</li>
       <li>A guest kernel from <code>cloud-hypervisor/linux</code></li>
-      <li>Docker and Go, to build the image</li>
+      <li>Docker on the host, for the base image; Go on your computer, to build <code>boxed</code></li>
       <li><code>nftables</code> and <code>iptables</code></li>
       <li>For the web: an OIDC provider, and a wildcard DNS record with a TLS proxy such as Caddy, or a Cloudflare Tunnel if the host has no public IP</li>
       <li>Optional: Tailscale for <code>ssh boxe</code> on your tailnet, <code>restic</code> for nightly backups</li>
@@ -297,18 +297,8 @@ zfs create boxe/sleep</code></pre>
       </div>
     </li>
     <li>
-      <h3>Build the base image</h3>
-      <p>exe.dev's exeuntu with a thin layer of ours, and our tool for its coding agents, built with Go. Tag it with today's date, here <code>20261030</code>.</p>
-      <div class="code" data-ui>
-<pre><code>go build -o image/boxeuntu ./cmd/boxeuntu
-docker build -t boxeuntu:20261030 image/
-sudo scripts/build-base.sh boxeuntu:20261030 boxeuntu-20261030</code></pre>
-        <button class="copy" type="button" data-copy="go build -o image/boxeuntu ./cmd/boxeuntu&#10;docker build -t boxeuntu:20261030 image/&#10;sudo scripts/build-base.sh boxeuntu:20261030 boxeuntu-20261030">Copy</button>
-      </div>
-    </li>
-    <li>
       <h3>Set up the host</h3>
-      <p>An unprivileged <code>boxe-vm</code> user, the network script, the team's GitHub usernames in <code>/etc/boxe/users</code>, the systemd units and <code>/etc/boxe/boxed.env</code>, with <code>-base boxe/images/boxeuntu-20261030@base</code>.</p>
+      <p>An unprivileged <code>boxe-vm</code> user, the network script, the team's GitHub usernames in <code>/etc/boxe/users</code>, the systemd units and <code>/etc/boxe/boxed.env</code>.</p>
       <p>Sleep and fork are off until you set <code>-sleep-dir /boxe/sleep</code>; add <code>-sleep-after 30m</code> to put unused VMs to sleep.</p>
     </li>
     <li>
@@ -317,6 +307,14 @@ sudo scripts/build-base.sh boxeuntu:20261030 boxeuntu-20261030</code></pre>
       <div class="code" data-ui>
 <pre><code>scripts/deploy.sh me@my-host</code></pre>
         <button class="copy" type="button" data-copy="scripts/deploy.sh me@my-host">Copy</button>
+      </div>
+    </li>
+    <li>
+      <h3>Get the base image</h3>
+      <p>boxed downloads boxeuntu, exe.dev's exeuntu with a thin layer of ours, within 10 minutes and keeps it up to date. To have it at once:</p>
+      <div class="code" data-ui>
+<pre><code>ssh boxe images update</code></pre>
+        <button class="copy" type="button" data-copy="ssh boxe images update">Copy</button>
       </div>
     </li>
   </ol>

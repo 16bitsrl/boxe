@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -30,7 +31,8 @@ import (
 
 // Hypervisor creates, starts and destroys microVMs on this host.
 type Hypervisor struct {
-	BaseSnapshot string // e.g. boxe/images/boxeuntu-20261028@base
+	BaseSnapshot string // -base, e.g. boxe/images/boxeuntu-20261028@base; Base() is the default now
+	base         atomic.Pointer[string]
 	Dataset      string // parent of the VM disks, e.g. boxe/vms
 	Kernel       string
 	HostPubKey   string       // the host's own key, added to every VM
@@ -88,6 +90,17 @@ func (h *Hypervisor) checkSetup(lookPath func(string) (string, error)) error {
 	}
 	return nil
 }
+
+// Base is the snapshot new VMs start from without --image: the one an
+// update or an admin chose (SetBase), else -base.
+func (h *Hypervisor) Base() string {
+	if b := h.base.Load(); b != nil {
+		return *b
+	}
+	return h.BaseSnapshot
+}
+
+func (h *Hypervisor) SetBase(snapshot string) { h.base.Store(&snapshot) }
 
 // vmRunDir holds a VM's control socket and vsock: its hypervisor sees only
 // its own.

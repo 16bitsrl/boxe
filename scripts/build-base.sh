@@ -2,11 +2,16 @@
 # Exports a container image to an ext4 zvol and takes its @base snapshot.
 # Usage: sudo build-base.sh <image> <dataset-name> [size]
 # e.g.   sudo build-base.sh boxeuntu:20261029 boxeuntu-20261029
+# A name with a slash is the whole dataset (boxed passes it so), else it goes
+# under boxe/images. boxed runs it, installed as /usr/local/sbin/boxe-build-base,
+# for the official images it downloads.
 # Names are never reused: VMs are clones of the snapshot, so an image in use
 # cannot be rebuilt in place. On failure nothing is left behind.
 set -euo pipefail
 IMAGE=$1 NAME=$2 SIZE=${3:-20G}
-DS=boxe/images/$NAME DEV=/dev/zvol/$DS MNT=$(mktemp -d)
+DS=boxe/images/$NAME
+case $NAME in */*) DS=$NAME ;; esac
+DEV=/dev/zvol/$DS MNT=$(mktemp -d)
 CID=""
 
 if zfs list "$DS" >/dev/null 2>&1; then
@@ -24,6 +29,8 @@ cleanup() {
 	fi
 }
 trap cleanup EXIT
+# Stopped (boxed's deadline, Ctrl-C): clean up as after a failure.
+trap 'exit 143' TERM INT
 
 zfs create -s -V "$SIZE" -o volblocksize=16k "$DS"
 udevadm settle

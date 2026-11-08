@@ -146,6 +146,10 @@ CREATE TABLE IF NOT EXISTS tokens (
 	created_at TEXT NOT NULL,
 	expires_at TEXT NOT NULL,
 	used_at    TEXT NOT NULL         -- empty: never
+);
+CREATE TABLE IF NOT EXISTS settings (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
 );`)
 	if err != nil {
 		return nil, err
@@ -407,6 +411,22 @@ func (s *Store) Samples(vm string, since time.Time) ([]Sample, error) {
 		list = append(list, x)
 	}
 	return list, rows.Err()
+}
+
+// Setting is a value boxed keeps across restarts; "" if never set.
+func (s *Store) Setting(key string) (string, error) {
+	var v string
+	err := s.db.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return v, err
+}
+
+func (s *Store) SetSetting(key, value string) error {
+	_, err := s.db.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
 }
 
 // PruneSamples forgets the samples from before t.

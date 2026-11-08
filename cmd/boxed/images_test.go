@@ -139,6 +139,7 @@ func TestOldBuildsGoWithTheirImage(t *testing.T) {
 	c.box.hv.BaseSnapshot = "boxe/images/boxeuntu-20261107-2@base"
 	c.host.images = []string{
 		"boxe/images/boxeuntu-20261105-3@base",
+		"boxe/images/boxeuntu-20261106@base", // the one before the default: kept to go back to
 		"boxe/images/boxeuntu-20261107-2@base",
 		"boxe/images/laravel-20261107-2@base",
 	}
@@ -199,7 +200,7 @@ func TestOldBuildsGoWithTheirImage(t *testing.T) {
 func TestPruneWithoutDocker(t *testing.T) {
 	c := newCLI(t, "alice")
 	c.box.hv.BaseSnapshot = "boxe/images/boxeuntu-20261107@base"
-	c.host.images = []string{"boxe/images/boxeuntu-20261105@base", "boxe/images/boxeuntu-20261107@base"}
+	c.host.images = []string{"boxe/images/boxeuntu-20261105@base", "boxe/images/boxeuntu-20261106@base", "boxe/images/boxeuntu-20261107@base"}
 	c.host.fail = map[string]bool{"docker": true}
 	images, builds := c.box.pruneImages()
 	if len(images) != 1 || images[0] != "boxeuntu-20261105" || len(builds) != 0 {

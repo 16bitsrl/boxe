@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,6 +11,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"os"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -51,6 +53,8 @@ type Box struct {
 	act        map[string]*activity // running VMs: how they are used (sleep.go)
 
 	llm *Gateway // nil: no LLM gateway
+
+	updates *Updates // official images; nil: off
 
 	// front is boxed -front, which holds the users' connections (front.go);
 	// nil: this process does.
@@ -190,6 +194,8 @@ func (b *Box) help(cmd string) string {
     (- as a value reads it from stdin; in the VM: http://<name>.int.SUFFIX/)
   SSH images                            the images new VMs can start from
   SSH images prune                      an admin: delete now the old images no VM uses
+  SSH images update                     an admin: download now a newer official image, if any
+  SSH images default <version>          an admin: the image new VMs start from without --image
   SSH llm                               your API keys for the models, used by all your VMs
   SSH llm set <anthropic|openai>        add or change a key (asked for; ssh -t hides it)
   SSH llm usage [--days 30]             tokens and cost of your VMs, per model
@@ -303,8 +309,8 @@ func (b *Box) run(w io.Writer, ask func(prompt string) (string, error), user, li
 		err = b.cmdEgress(o, user, args[1:])
 	case args[0] == "integrations":
 		err = b.cmdIntegrations(o, ask, user, args[1:])
-	case args[0] == "images" && len(args) > 1 && args[1] == "prune":
-		err = b.cmdPrune(o, user)
+	case args[0] == "images" && len(args) > 1:
+		err = b.cmdImagesAdmin(o, user, args[1:])
 	case args[0] == "images":
 		err = b.cmdImages(o)
 	case args[0] == "llm":
@@ -534,7 +540,7 @@ func (b *Box) cmdNew(o output, user string, args []string, agent string) error {
 	if err != nil {
 		return err
 	}
-	snapshot := b.hv.BaseSnapshot
+	snapshot := "" // the default, read once b.create holds b.mu
 	if image != "" {
 		if snapshot, err = b.hv.Image(image); err != nil {
 			return fmt.Errorf("%v: ssh %s images lists them", err, b.name)
@@ -591,12 +597,48 @@ type pruneJSON struct {
 	Builds []string `json:"builds"`
 }
 
+// cmdImagesAdmin runs the admins' images commands: prune, update, default.
+func (b *Box) cmdImagesAdmin(o output, user string, args []string) error {
+	usage := fmt.Errorf("usage: ssh %s images [prune | update | default <version>]", b.name)
+	switch {
+	case args[0] != "prune" && args[0] != "update" && args[0] != "default":
+		return usage
+	case !b.keys.Admin(user):
+		return fmt.Errorf("only an admin can change the images")
+	case args[0] == "prune" && len(args) == 1:
+		return b.cmdPrune(o)
+	case args[0] == "update" && len(args) == 1:
+		if b.updates == nil {
+			return fmt.Errorf("updates of the images are off on this host (-image-updates)")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		msg, err := b.updateImage(ctx, false)
+		if err != nil {
+			return err
+		}
+		o.print(map[string]string{"message": strings.TrimSpace(msg)}, msg)
+		return nil
+	case args[0] == "default" && len(args) == 2:
+		snap, err := b.hv.Image(args[1])
+		if err != nil {
+			return fmt.Errorf("%v: ssh %s images lists them", err, b.name)
+		}
+		if err := b.setDefault(snap); err != nil {
+			log.Printf("images: %v", err)
+			return hostErrorf("could not change the default image")
+		}
+		v := path.Base(strings.TrimSuffix(snap, "@base"))
+		log.Printf("%s: new VMs start from %s", user, v)
+		o.print(map[string]string{"default": v}, "New VMs start from "+v+".\n")
+		return nil
+	}
+	return usage
+}
+
 // cmdPrune does now what boxed does every so often: it deletes the image
 // versions no VM uses and nobody can pick, and the Docker images of those.
-func (b *Box) cmdPrune(o output, user string) error {
-	if !b.keys.Admin(user) {
-		return fmt.Errorf("only an admin can delete images")
-	}
+func (b *Box) cmdPrune(o output) error {
 	images, builds := b.pruneImages()
 	var text strings.Builder
 	for _, v := range images {
@@ -753,6 +795,9 @@ func (b *Box) create(o output, user, name string, cpus int, mem string, srcName,
 			return err
 		}
 		src, cpus, mem, image = &v, v.CPUs, v.Mem, v.Image
+	}
+	if image == "" {
+		image = b.hv.Base()
 	}
 	if name == "" {
 		var err error

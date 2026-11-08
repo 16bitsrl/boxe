@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"path"
 	"runtime"
 	"strconv"
 	"strings"
@@ -23,6 +24,16 @@ type hostInfo struct {
 	Backups  bool       // on
 	Last     string     // when the last complete backup ended, RFC3339; "" never
 	Run      *backupRun // the last run, if any
+	Image    hostImage
+}
+
+// hostImage is the default image and its updates.
+type hostImage struct {
+	Name, Version, Source string // the default: boxeuntu, 20261107-2, v0.1.1
+	Updates               string // where official images come from; "": off
+	Checked               string // RFC3339; "": not yet
+	Published             string // the newest there, e.g. 20261110
+	Getting, Note, Err    string
 }
 
 type hostMember struct {
@@ -78,6 +89,7 @@ func (b *Box) hostInfo() hostInfo {
 		}
 		h.Members = append(h.Members, hostMember{m, count[m.User], mem})
 	}
+	h.Image = b.hostImage()
 	if _, err := os.Stat(b.backupConf); err == nil {
 		h.Backups = true
 		raw, _ := os.ReadFile(b.backupLast)
@@ -87,6 +99,28 @@ func (b *Box) hostInfo() hostInfo {
 		var r backupRun
 		if raw, err := os.ReadFile(b.backupStatus); err == nil && json.Unmarshal(raw, &r) == nil && r.Start > 0 {
 			h.Run = &r
+		}
+	}
+	return h
+}
+
+func (b *Box) hostImage() hostImage {
+	v := path.Base(strings.TrimSuffix(b.hv.Base(), "@base"))
+	name, _, _ := imageOf(v)
+	im := []image{{Name: name, Version: v}}
+	b.hv.imageSources(im)
+	h := hostImage{Name: name, Version: shortVersion(v), Source: im[0].Source}
+	if u := b.updates; u != nil {
+		s := u.Status()
+		h.Updates, h.Note, h.Err = u.Repo, s.Note, s.Err
+		if !s.Checked.IsZero() {
+			h.Checked = s.Checked.Format(time.RFC3339)
+		}
+		if s.Published != "" {
+			h.Published = shortVersion(s.Published)
+		}
+		if s.Getting != "" {
+			h.Getting = shortVersion(s.Getting)
 		}
 	}
 	return h

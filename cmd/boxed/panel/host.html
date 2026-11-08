@@ -14,8 +14,17 @@
       <dt>Awake VMs</dt><dd>{{if .MemVMs}}{{size .MemVMs}} of RAM{{else}}none{{end}}</dd>
       <dt>VM disks</dt><dd>{{size .DiskFree}} free</dd>
     </dl>
-    <dl class="facts">
+    <dl class="facts" data-live="host-image">
       <dt>boxed</dt><dd>{{.Version}}</dd>
+      {{with .Image}}
+      <dt>Image</dt><dd>{{.Name}} {{.Version}}{{if .Source}}, from boxe {{.Source}}{{end}}</dd>
+      <dt>Updates</dt><dd>{{if not .Updates}}off
+        {{else if .Getting}}downloading {{.Name}} {{.Getting}}
+        {{else if .Err}}<span class="bad">{{.Err}}</span>
+        {{else if .Note}}{{.Note}}
+        {{else if .Checked}}checked {{when .Checked}}{{if .Published}}, newest published {{.Published}}{{else}}, nothing published yet{{end}}
+        {{else}}not checked yet{{end}}</dd>
+      {{end}}
     </dl>
   </div>
 </div>

@@ -1,0 +1,89 @@
+name: exeuntu
+
+# Every Monday: is there a newer exeuntu, the image of exe.dev that boxeuntu
+# starts from? If so, a pull request moves image/Dockerfile to it and lists
+# what changed upstream, for us to judge how much it touches boxe before
+# merging. Merging publishes a new boxeuntu (image.yml).
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  exeuntu:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM: ghcr.io/boldsoftware/exeuntu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Look for a newer exeuntu
+        run: |
+          set -euo pipefail
+          old=$(grep -oE 'exeuntu@sha256:[0-9a-f]{64}' image/Dockerfile | cut -d@ -f2)
+          new=$(docker buildx imagetools inspect "${UPSTREAM}:latest" --format '{{json .Manifest}}' | jq -r .digest)
+          if [ "$old" = "$new" ]; then
+            echo "exeuntu is unchanged: $old" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          branch=exeuntu-${new:7:12}
+          if [ -n "$(gh pr list --head "$branch" --state all --json number --jq '.[].number')" ]; then
+            echo "There is already a pull request for $new (open, merged or closed)" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # One open at a time: a newer exeuntu replaces the one not merged.
+          older=$(gh pr list --state open --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("exeuntu-")) | .number')
+
+          # exeuntu is built from exe.dev's own repository, at every commit
+          # there; its sources are mirrored in boldsoftware/exeuntu. What
+          # changed are the commits there between the two images' dates.
+          created() {
+            docker buildx imagetools inspect "${UPSTREAM}@$1" --format '{{json .Image}}' |
+              jq -r '(if has("linux/amd64") then .["linux/amd64"] else . end).config.Labels["org.opencontainers.image.created"] // empty'
+          }
+          since=$(created "$old") until=$(created "$new")
+          tip() { gh api "repos/boldsoftware/exeuntu/commits?until=$1&per_page=1" --jq '.[0].sha // empty'; }
+          from=$(tip "$since") to=$(tip "$until")
+
+          {
+            echo "exeuntu has a new image, built ${until:-on an unknown date}; ours is from ${since:-an unknown date}."
+            echo
+            echo "Before merging, judge whether it touches what boxe changes in the image: the user (\`exedev\`, renamed \`boxedev\`), the agents and their setup (our \`cmd/boxeuntu\` is a fork of exeuntu's \`cli/\`), Shelley, the desktop, sshd and systemd units. If in doubt, build it on a host and try a VM. Merging publishes a new boxeuntu, which every installation downloads within a day."
+            echo
+            if [ -z "$since" ] || [ -z "$until" ] || [ -z "$from" ]; then
+              echo "The images do not say when they were built: compare them by hand at https://github.com/boldsoftware/exeuntu/commits/main."
+            elif [ "$from" = "$to" ]; then
+              echo "No change to exeuntu's sources in between: it was only built again, with newer packages."
+            else
+              compare=$(gh api "repos/boldsoftware/exeuntu/compare/$from...$to")
+              echo "### Commits"
+              echo
+              jq -r '.commits[] | "- [`\(.sha[0:7])`](\(.html_url)) \(.commit.message | split("\n")[0])"' <<<"$compare"
+              echo
+              echo "### Files"
+              echo
+              jq -r '.files[] | "- `\(.filename)` (\(.status))"' <<<"$compare"
+              echo
+              echo "Full comparison: https://github.com/boldsoftware/exeuntu/compare/$from...$to"
+            fi
+            echo
+            echo "\`$old\` → \`$new\`"
+          } > body.md
+          cat body.md >> "$GITHUB_STEP_SUMMARY"
+
+          sed -i "s/$old/$new/" image/Dockerfile
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -qam "image: exeuntu of ${until:0:10}"
+          git push -qf origin "$branch"
+          url=$(gh pr create --head "$branch" --title "image: exeuntu of ${until:0:10}" --body-file body.md)
+          for pr in $older; do
+            gh pr close "$pr" --delete-branch --comment "A newer exeuntu is out: $url"
+          done

@@ -34,7 +34,9 @@ func main() {
 		stateDir    = flag.String("state", "/var/lib/boxe", "state directory (database, host key, tsnet)")
 		usersFile   = flag.String("users", "/etc/boxe/users", "the team, one per line: GitHub username, email at the IdP, \"admin\" for an admin")
 		hostKey     = flag.String("vm-key", "/etc/boxe/id_ed25519.pub", "the host's public key, added to every VM")
-		base        = flag.String("base", "boxe/images/boxeuntu@base", "snapshot new VMs are cloned from")
+		base        = flag.String("base", "boxe/images/boxeuntu@base", "snapshot new VMs are cloned from, until a newer official image is downloaded (-image-updates) or an admin picks another (ssh boxe images default)")
+		updatesRepo = flag.String("image-updates", "ghcr.io/16bitsrl/boxeuntu", "where the official images are published: boxed downloads a newer one every day and makes it the default, if the default is one of them; empty: never")
+		buildBase   = flag.String("build-base", "/usr/local/sbin/boxe-build-base", "scripts/build-base.sh as installed, which makes an image of a downloaded one")
 		dataset     = flag.String("dataset", "boxe/vms", "ZFS dataset holding the VM disks")
 		kernel      = flag.String("kernel", "/var/lib/boxe/kernels/vmlinux-7.2.8-boxe", "guest kernel")
 		tsName      = flag.String("ts-hostname", "boxe", "Tailscale node name, what users ssh to; empty to disable Tailscale")
@@ -156,6 +158,10 @@ func main() {
 	if *sockets != "" {
 		b.front = &frontClient{sock: filepath.Join(*sockets, frontSock)}
 	}
+	b.loadDefault()
+	if *updatesRepo != "" {
+		b.updates = &Updates{Repo: *updatesRepo, Script: *buildBase, Client: &http.Client{Timeout: time.Minute}}
+	}
 	// The VMs' network, as boxe-net.service made br0 (BOXE_SUBNET).
 	if err := vmNetFromBridge(); err != nil {
 		log.Fatal(err)
@@ -205,6 +211,9 @@ func main() {
 		go func() { log.Fatal(serve(limitListener(ln, newLimiter(vmConns, 16*vmConns)))) }()
 	}
 	go b.ReapLoop(time.Minute)
+	if b.updates != nil {
+		go b.UpdateLoop(10*time.Minute, 24*time.Hour)
+	}
 	go b.SleepLoop(time.Minute)
 	if *sleepDir != "" {
 		go b.WakeLoop(15 * time.Second)

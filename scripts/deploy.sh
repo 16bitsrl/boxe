@@ -39,7 +39,7 @@ fi
 
 VERSION=$(date -u +%Y%m%d%H%M%S)-$(git describe --tags --always 2>/dev/null || echo dev)
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "dist/boxed-$VERSION" ./cmd/boxed
-scp -q "dist/boxed-$VERSION" scripts/boxe-front.service "$HOST:/tmp/"
+scp -q "dist/boxed-$VERSION" scripts/boxe-front.service scripts/build-base.sh "$HOST:/tmp/"
 remote "$VERSION" "$FRONT" <<'SH'
 set -euo pipefail
 V=$1 FRONT=$2 LIB=/usr/local/lib/boxed
@@ -50,6 +50,8 @@ if ! cmp -s /tmp/boxe-front.service /etc/systemd/system/boxe-front.service; then
 	systemctl daemon-reload
 fi
 rm /tmp/boxe-front.service
+# What boxed runs to make an image of an official one it downloads.
+install -m755 /tmp/build-base.sh /usr/local/sbin/boxe-build-base && rm /tmp/build-base.sh
 if [ "$FRONT" = 1 ] && ! systemctl cat boxed | grep -q -- -sockets; then
 	echo "--front: boxed.service has no -sockets, install it from scripts/ first (README)" >&2
 	exit 1

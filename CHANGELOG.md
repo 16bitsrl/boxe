@@ -4,6 +4,22 @@ What changed in each release of boxe. Versions follow
 [semantic versioning](https://semver.org); until 1.0, a minor version may
 change how boxe is installed or run, and its notes say how to upgrade.
 
+## v0.2.0 (2026-11-08)
+
+- **Official images.** boxe now publishes boxeuntu, its base image, as
+  `ghcr.io/16bitsrl/boxeuntu:<date>`. Every day boxed downloads a newer one
+  and makes it the default for new VMs; the host page of the panel shows
+  which image new VMs start from and how its updates go. A host whose
+  default is an image of its own keeps it.
+  - Admins: `ssh boxe images update` checks at once, `ssh boxe images default
+    <version>` picks the default by hand (going back, if a new image gives
+    trouble: the cleanup keeps the version before the default, and the one
+    `-base` names).
+  - Upgrading: `scripts/deploy.sh` installs `scripts/build-base.sh` as
+    `/usr/local/sbin/boxe-build-base`, which boxed runs to make an image of a
+    download. To keep building boxeuntu yourself, set `-image-updates=`.
+    Pointing `-base` at another image undoes an update's choice.
+
 ## v0.1.2 (2026-11-07)
 
 - boxed now also deletes the Docker images that old image versions were

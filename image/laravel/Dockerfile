@@ -1,5 +1,6 @@
 # laravel, an image for Laravel projects: boxeuntu plus PHP, Composer and Node.
-# Build on the host, from a boxeuntu build (docker images boxeuntu):
+# Build on the host, from a boxeuntu build (docker images boxeuntu) or an
+# official one (BASE=ghcr.io/16bitsrl/boxeuntu:<version>):
 #   docker build --build-arg BASE=boxeuntu:<version> --build-arg BOXE_SOURCE=$(git describe --tags --always) -t laravel:<date> image/laravel
 #   sudo scripts/build-base.sh laravel:<date> laravel-<date>
 # then: ssh boxe new --image laravel

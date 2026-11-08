@@ -88,7 +88,7 @@ func (h *Hypervisor) Images() ([]image, error) {
 				continue // not the newest
 			}
 		}
-		images = append(images, image{Name: name, Version: v, Default: h.snapshot(v) == h.BaseSnapshot})
+		images = append(images, image{Name: name, Version: v, Default: h.snapshot(v) == h.Base()})
 	}
 	h.imageSources(images)
 	return images, nil
@@ -170,7 +170,20 @@ func (b *Box) pruneVersions() (removed []string) {
 		log.Printf("images: %v", err)
 		return nil
 	}
-	used := map[string]bool{h.BaseSnapshot: true}
+	// The default, -base (where new VMs go if the default is lost), and the
+	// version of the default's name just before it, to go back to.
+	used := map[string]bool{h.Base(): true, h.BaseSnapshot: true}
+	def := path.Base(strings.TrimSuffix(h.Base(), "@base"))
+	defName, _, _ := imageOf(def)
+	prev := ""
+	for _, v := range versions { // oldest first: the last one before def
+		if n, _, _ := imageOf(v); n == defName && versionLess(v, def) {
+			prev = v
+		}
+	}
+	if prev != "" {
+		used[h.snapshot(prev)] = true
+	}
 	for _, v := range vms {
 		used[v.Image] = true // copies too: their disk may come from the image through their source's
 	}

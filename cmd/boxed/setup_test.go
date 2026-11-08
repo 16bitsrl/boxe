@@ -26,13 +26,13 @@ func TestCheckSetup(t *testing.T) {
 	}
 	for _, c := range []struct {
 		name string
-		h    Hypervisor
+		h    *Hypervisor
 		gone string
 		want string
 	}{
-		{"no kernel", Hypervisor{Kernel: kernel + "-7.2.8-boxe"}, "", "-kernel"},
-		{"no cloud-hypervisor", Hypervisor{Kernel: kernel}, "/usr/local/bin/cloud-hypervisor", "cloud-hypervisor"},
-		{"no ch-remote", Hypervisor{Kernel: kernel, SleepDir: "/boxe/sleep"}, "ch-remote", "ch-remote"},
+		{"no kernel", &Hypervisor{Kernel: kernel + "-7.2.8-boxe"}, "", "-kernel"},
+		{"no cloud-hypervisor", &Hypervisor{Kernel: kernel}, "/usr/local/bin/cloud-hypervisor", "cloud-hypervisor"},
+		{"no ch-remote", &Hypervisor{Kernel: kernel, SleepDir: "/boxe/sleep"}, "ch-remote", "ch-remote"},
 	} {
 		installed[c.gone] = false
 		err := c.h.checkSetup(lookPath)
