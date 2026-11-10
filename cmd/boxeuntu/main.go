@@ -26,9 +26,10 @@ var version = "dev"
 const usage = `boxeuntu manages the coding agents of this VM.
 
   boxeuntu configure                 set Codex, OpenCode and pi up for the models of your
-                                     boxe account (Claude Code needs nothing), and give
-                                     every agent the computer tools (MCP server "computer");
-                                     run it after ssh boxe llm set, or restart the VM
+                                     boxe account, Claude Code and Codex for your
+                                     subscriptions, and give every agent the computer
+                                     tools (MCP server "computer"); run it after
+                                     ssh boxe llm set, or restart the VM
   sudo boxeuntu update <agent>       update claude, codex or opencode to the latest version
   boxeuntu update pi                 pi lives in your home: without sudo
   boxeuntu install <agent>           the same, for an agent that is not there
@@ -143,6 +144,19 @@ func configure(args []string, stdout io.Writer) error {
 				continue // no gateway: no keys to speak of
 			}
 			fmt.Fprintf(stdout, "%s: no key for it in your boxe account (ssh boxe llm set)\n", r.Agent)
+		}
+	}
+	if g.URL != "" {
+		status, serr := agentconfig.ClaudeSettings(home, g)
+		switch {
+		case serr != nil:
+			claudeErr = errors.Join(claudeErr, fmt.Errorf("claude: %w", serr))
+		case status == "written":
+			fmt.Fprintln(stdout, "claude: uses your Claude subscription (~/.claude/settings.json)")
+		case status == "removed":
+			fmt.Fprintln(stdout, "claude: no Claude subscription any more (~/.claude/settings.json)")
+		case status == "kept":
+			fmt.Fprintln(stdout, "claude: ~/.claude/settings.json is not JSON, left as it is")
 		}
 	}
 	return errors.Join(claudeErr, err)

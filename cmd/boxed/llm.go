@@ -30,6 +30,9 @@ import (
 //
 // The paths are those of exe.dev's gateway, which Shelley knows:
 // /anthropic/v1/messages, /openai/chat/completions, /openai/responses.
+//
+// The owner's subscriptions (plans.go) go the same way: Claude Code's
+// requests on /anthropic, Codex's on /chatgpt.
 
 type llmProvider struct {
 	name     string
@@ -37,11 +40,14 @@ type llmProvider struct {
 	keyEnv   string // the environment variables SDKs read
 	baseEnv  string
 	models   string // path that checks a key
+	plan     bool   // a subscription, for Claude Code or Codex, not an API key
 }
 
 var llmProviders = []llmProvider{
-	{"anthropic", "https://api.anthropic.com", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "/v1/models"},
-	{"openai", "https://api.openai.com/v1", "OPENAI_API_KEY", "OPENAI_BASE_URL", "/models"},
+	{"anthropic", "https://api.anthropic.com", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "/v1/models", false},
+	{"openai", "https://api.openai.com/v1", "OPENAI_API_KEY", "OPENAI_BASE_URL", "/models", false},
+	{"claude", "https://api.anthropic.com", "", "", "/v1/models", true},
+	{"chatgpt", "https://chatgpt.com/backend-api/codex", "", "", "", true},
 }
 
 func llmProviderNamed(name string) (llmProvider, bool) {
@@ -58,13 +64,15 @@ func llmProviderNamed(name string) (llmProvider, bool) {
 const llmPlaceholder = "boxe"
 
 type Gateway struct {
-	store    *Store
-	addr     string            // where VMs reach it, e.g. 10.42.0.1:2998
-	upstream map[string]string // provider -> base URL (tests point them elsewhere)
-	client   *http.Client
+	store           *Store
+	addr            string            // where VMs reach it, e.g. 10.42.0.1:2998
+	upstream        map[string]string // provider -> base URL (tests point them elsewhere)
+	chatgptTokenURL string            // where ChatGPT logins are refreshed
+	client          *http.Client
 
-	mu   sync.Mutex
-	busy map[string]int // VM -> requests under way
+	mu       sync.Mutex
+	busy     map[string]int         // VM -> requests under way
+	chatgpts map[string]*sync.Mutex // user -> their ChatGPT login, while it is refreshed
 }
 
 // llmPerVM is how many requests a VM can have under way: each can hold
@@ -72,7 +80,8 @@ type Gateway struct {
 const llmPerVM = 16
 
 func newGateway(store *Store, addr string) *Gateway {
-	g := &Gateway{store: store, addr: addr, upstream: map[string]string{}, busy: map[string]int{}, client: &http.Client{Timeout: 15 * time.Second}}
+	g := &Gateway{store: store, addr: addr, upstream: map[string]string{}, busy: map[string]int{}, chatgpts: map[string]*sync.Mutex{},
+		chatgptTokenURL: chatgptTokenURL, client: &http.Client{Timeout: 15 * time.Second}}
 	for _, p := range llmProviders {
 		g.upstream[p.name] = p.upstream
 	}
@@ -133,15 +142,12 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/env":
 		// Sourced by the VM's login shells (etc/profile.d/boxe-llm.sh).
-		for _, p := range llmProviders {
-			if keys[p.name] != "" {
-				fmt.Fprintf(w, "export %s=%s/%s\nexport %s=%s\n", p.baseEnv, g.URL(), p.name, p.keyEnv, llmPlaceholder)
-			}
-		}
+		g.env(w, keys)
 		return
 	case "/shelley.json":
 		// Read by Shelley when it starts (its unit's drop-in, see configArchive).
-		if len(keys) == 0 {
+		// It has no use for subscriptions.
+		if keys["anthropic"] == "" && keys["openai"] == "" {
 			io.WriteString(w, "{}\n")
 			return
 		}
@@ -155,19 +161,32 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	name, _, _ := strings.Cut(strings.TrimPrefix(clean, "/"), "/")
 	p, ok := llmProviderNamed(name)
-	if !ok || clean != r.URL.Path || strings.Contains(r.URL.RawPath, "%2") || strings.Contains(r.URL.RawPath, "%5") {
+	if !ok || name == "claude" || clean != r.URL.Path || strings.Contains(r.URL.RawPath, "%2") || strings.Contains(r.URL.RawPath, "%5") {
 		http.NotFound(w, r)
 		return
 	}
+	if p.name == "anthropic" && claudeCodeSignedIn(r) {
+		p, _ = llmProviderNamed("claude")
+	}
 	// A key of the VM's own (or a subscription's token) goes through as it
-	// is; the placeholder, or none, gets the owner's.
-	add := !ownCredential(p, r)
+	// is; the placeholder, or none, gets the owner's. Codex's requests always
+	// get the owner's login: only the gateway signs in to ChatGPT.
+	add := p.name == "chatgpt" || !ownCredential(p, r)
 	if add && keys[p.name] == "" {
 		ownKeyMissing(w, p)
 		return
 	}
 	if !add {
 		keys[p.name] = ""
+	}
+	account := ""
+	if p.name == "chatgpt" {
+		var err error
+		if keys[p.name], account, err = g.chatgptAccess(v.Owner); err != nil {
+			log.Printf("chatgpt login of %s: %v", v.Owner, err)
+			loginExpired(w, err)
+			return
+		}
 	}
 	if !g.start(v) {
 		http.Error(w, "boxe gateway: too many requests under way from this VM", http.StatusTooManyRequests)
@@ -180,7 +199,42 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	g.proxy(p, v, keys[p.name]).ServeHTTP(w, r)
+	g.proxy(p, v, keys[p.name], account).ServeHTTP(w, r)
+}
+
+// env is what login shells in the VM export: where each provider the owner
+// has a key for is, and the placeholder for its key. Claude Code signs in
+// with a placeholder of its own when there is a Claude subscription.
+func (g *Gateway) env(w io.Writer, keys map[string]string) {
+	var plans []string
+	for _, p := range llmProviders {
+		switch {
+		case keys[p.name] == "":
+		case p.plan:
+			plans = append(plans, p.name)
+		default:
+			fmt.Fprintf(w, "export %s=%s/%s\nexport %s=%s\n", p.baseEnv, g.URL(), p.name, p.keyEnv, llmPlaceholder)
+		}
+	}
+	if keys["claude"] != "" {
+		if keys["anthropic"] == "" {
+			fmt.Fprintf(w, "export ANTHROPIC_BASE_URL=%s/anthropic\n", g.URL())
+		}
+		fmt.Fprintf(w, "export CLAUDE_CODE_OAUTH_TOKEN=%s\n", llmPlaceholder)
+		if keys["anthropic"] != "" {
+			// OpenCode runs Claude Code without its settings, where the
+			// API key would win: boxeuntu's script drops it.
+			script := `"$HOME/.config/boxeuntu/claude-subscription"`
+			fmt.Fprintf(w, "[ -x %s ] && export OPENCODE_CLAUDE_PATH=%s\n", script, script)
+		}
+	}
+	switch len(plans) {
+	case 0:
+	case 1:
+		fmt.Fprintf(w, "export BOXE_LLM_PLANS=%s\n", plans[0])
+	default:
+		fmt.Fprintf(w, "export BOXE_LLM_PLANS=\"%s\"\n", strings.Join(plans, " "))
+	}
 }
 
 func (g *Gateway) start(v VM) bool {
@@ -204,7 +258,7 @@ func (g *Gateway) end(v VM) {
 // credentialHeaders are where p reads a key from: Anthropic takes an API
 // key or a subscription's bearer token, OpenAI only the bearer.
 func credentialHeaders(p llmProvider) []string {
-	if p.name == "anthropic" {
+	if p.name == "anthropic" || p.name == "claude" {
 		return []string{"X-Api-Key", "Authorization"}
 	}
 	return []string{"Authorization"}
@@ -225,13 +279,18 @@ func ownCredential(p llmProvider, r *http.Request) bool {
 	return false
 }
 
-// proxy sends requests on to p, with key in place of theirs if not empty.
-func (g *Gateway) proxy(p llmProvider, v VM, key string) http.Handler {
+// proxy sends requests on to p, with key in place of theirs if not empty,
+// and the ChatGPT account the key is for, if any.
+func (g *Gateway) proxy(p llmProvider, v VM, key, account string) http.Handler {
 	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			up, _ := url.Parse(g.upstream[p.name])
 			pr.SetURL(up)
-			pr.Out.URL.Path = up.Path + strings.TrimPrefix(pr.In.URL.Path, "/"+p.name)
+			route := "/" + p.name
+			if p.name == "claude" {
+				route = "/anthropic" // Claude Code's requests come there
+			}
+			pr.Out.URL.Path = up.Path + strings.TrimPrefix(pr.In.URL.Path, route)
 			pr.Out.URL.RawPath = ""
 			pr.Out.Host = up.Host
 			// Plain answers, to read the tokens: the transport asks for
@@ -249,6 +308,9 @@ func (g *Gateway) proxy(p llmProvider, v VM, key string) http.Handler {
 					pr.Out.Header.Set("Authorization", "Bearer "+key)
 				}
 			}
+			if p.name == "chatgpt" {
+				pr.Out.Header.Set("Chatgpt-Account-Id", account)
+			}
 			if p.name == "openai" && strings.HasSuffix(pr.Out.URL.Path, "/chat/completions") {
 				askForUsage(pr.Out)
 			}
@@ -257,9 +319,11 @@ func (g *Gateway) proxy(p llmProvider, v VM, key string) http.Handler {
 		ModifyResponse: func(resp *http.Response) error {
 			// Only requests that make an answer: looking one up again
 			// (GET /responses/<id>) reports the same tokens.
+			// ChatGPT sends its events without a Content-Type.
 			ct := resp.Header.Get("Content-Type")
-			if resp.Request.Method == http.MethodPost && resp.StatusCode == http.StatusOK && (strings.HasPrefix(ct, "text/event-stream") || strings.HasPrefix(ct, "application/json")) {
-				resp.Body = &meter{ReadCloser: resp.Body, sse: strings.HasPrefix(ct, "text/event-stream"),
+			sse := strings.HasPrefix(ct, "text/event-stream") || p.name == "chatgpt" && ct == ""
+			if resp.Request.Method == http.MethodPost && resp.StatusCode == http.StatusOK && (sse || strings.HasPrefix(ct, "application/json")) {
+				resp.Body = &meter{ReadCloser: resp.Body, sse: sse,
 					record: func(u llmUsage) { g.record(v, p.name, u) }}
 			}
 			return nil
@@ -319,6 +383,7 @@ func noWebTools(r *http.Request, path string) error {
 var restrictedEndpoints = map[string]bool{
 	"/anthropic/v1/messages": true, "/anthropic/v1/messages/count_tokens": true,
 	"/openai/chat/completions": true, "/openai/responses": true, "/openai/embeddings": true,
+	"/chatgpt/responses": true,
 }
 
 // fetchesURL says whether a request, decoded, has the provider fetch a URL:
@@ -370,6 +435,9 @@ func ownKeyMissing(w http.ResponseWriter, p llmProvider) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	msg := fmt.Sprintf("no %s key in your boxe account: on your computer, run ssh boxe llm set %s", p.name, p.name)
+	if p.plan {
+		msg = fmt.Sprintf("no %s subscription in your boxe account: on your computer, run ssh boxe llm set %s", p.name, p.name)
+	}
 	json.NewEncoder(w).Encode(map[string]any{"type": "error", "error": map[string]string{"type": "authentication_error", "message": msg}})
 }
 
@@ -580,7 +648,8 @@ func (m *meter) add(f *usageFields) {
 
 func (g *Gateway) record(v VM, provider string, u llmUsage) {
 	var cost *float64
-	if p, ok := priceOf(u.Model); ok {
+	// A subscription's tokens cost nothing more.
+	if p, ok := priceOf(u.Model); ok && !isPlan(provider) {
 		c := (float64(u.Input)*p.Input + float64(u.Output)*p.Output + float64(u.CacheRead)*p.CacheRead + float64(u.CacheWrite)*p.CacheWrite) / 1e6
 		cost = &c
 	}
@@ -592,10 +661,15 @@ func (g *Gateway) record(v VM, provider string, u llmUsage) {
 // check says whether the provider takes key.
 func (g *Gateway) check(p llmProvider, key string) error {
 	req, _ := http.NewRequest("GET", g.upstream[p.name]+p.models, nil)
-	if p.name == "anthropic" {
+	switch p.name {
+	case "anthropic":
 		req.Header.Set("X-Api-Key", key)
 		req.Header.Set("Anthropic-Version", "2023-06-01")
-	} else {
+	case "claude":
+		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set("Anthropic-Version", "2023-06-01")
+		req.Header.Set("Anthropic-Beta", claudeOAuthBeta)
+	default:
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
 	resp, err := g.client.Do(req)
@@ -707,22 +781,32 @@ func (b *Box) cmdLLM(o output, ask func(string) (string, error), user string, ar
 		if err != nil {
 			return err
 		}
+		var key string
 		if sub == "set" {
-			key, err := ask(fmt.Sprintf("Paste your %s API key, then press Enter (with ssh -t it is not shown): ", p.name))
+			switch p.name {
+			case "claude":
+				key, err = b.setClaude(ask)
+			case "chatgpt":
+				key, err = b.setChatGPT(ask)
+			default:
+				key, err = b.setAPIKey(ask, p)
+			}
 			if err != nil {
 				return err
 			}
-			key = strings.TrimSpace(key)
-			if key == "" || len(key) > 512 || strings.ContainsAny(key, " \t\r\n") {
-				return fmt.Errorf("that does not look like an API key")
+		}
+		save := func() error {
+			if p.name == "chatgpt" { // not while a refresh is under way
+				m := b.llm.chatgptLock(user)
+				m.Lock()
+				defer m.Unlock()
 			}
-			if err := b.llm.check(p, key); err != nil {
-				return err
+			if sub == "set" {
+				return b.store.SetLLMKey(user, p.name, key)
 			}
-			if err := b.store.SetLLMKey(user, p.name, key); err != nil {
-				return err
-			}
-		} else if err := b.store.DeleteLLMKey(user, p.name); err != nil {
+			return b.store.DeleteLLMKey(user, p.name)
+		}
+		if err := save(); err != nil {
 			return err
 		}
 		after, err := b.store.LLMKeys(user)
@@ -730,12 +814,20 @@ func (b *Box) cmdLLM(o output, ask func(string) (string, error), user string, ar
 			return err
 		}
 		if (before[p.name] == "") != (after[p.name] == "") {
-			b.refreshAgents(user, (len(before) == 0) != (len(after) == 0))
+			b.refreshAgents(user, !p.plan && (apiKeys(before) == 0) != (apiKeys(after) == 0))
 		}
 		status := map[bool]string{true: "saved", false: "removed"}[sub == "set"]
 		text := fmt.Sprintf("%s key %s. Your VMs use it from the next login shell; Shelley, Codex, OpenCode and pi already do.\n", p.name, status)
-		if sub == "rm" {
+		switch {
+		case sub == "rm" && p.plan:
+			text = fmt.Sprintf("%s subscription removed.\n", p.name)
+		case sub == "rm":
 			text = fmt.Sprintf("%s key removed.\n", p.name)
+		case p.name == "claude":
+			text = "Claude subscription saved. Claude Code in your VMs uses it, also with an Anthropic key in the account; other programs keep the key.\n"
+		case p.name == "chatgpt":
+			text = "ChatGPT subscription saved. Codex in your VMs uses it, also with an OpenAI key in the account; other programs keep the key.\n" +
+				"boxe now refreshes this login itself: delete the folder you logged in to for it.\n"
 		}
 		o.print(map[string]string{"provider": p.name, "status": status}, text)
 		return nil
@@ -743,6 +835,35 @@ func (b *Box) cmdLLM(o output, ask func(string) (string, error), user string, ar
 		return b.llmUsage(o, user, args)
 	}
 	return fmt.Errorf("unknown llm command %q: ssh %s help", sub, b.name)
+}
+
+// setAPIKey asks for an API key of p and checks it with p.
+func (b *Box) setAPIKey(ask func(string) (string, error), p llmProvider) (string, error) {
+	key, err := ask(fmt.Sprintf("Paste your %s API key, then press Enter (with ssh -t it is not shown): ", p.name))
+	if err != nil {
+		return "", err
+	}
+	key = strings.TrimSpace(key)
+	if key == "" || len(key) > 512 || strings.ContainsAny(key, " \t\r\n") {
+		return "", fmt.Errorf("that does not look like an API key")
+	}
+	return key, b.llm.check(p, key)
+}
+
+// apiKeys is how many API keys, not subscriptions, are among keys.
+func apiKeys(keys map[string]string) int {
+	n := 0
+	for name, k := range keys {
+		if k != "" && !isPlan(name) {
+			n++
+		}
+	}
+	return n
+}
+
+func isPlan(provider string) bool {
+	p, ok := llmProviderNamed(provider)
+	return ok && p.plan
 }
 
 func providerNames() string {
@@ -759,29 +880,45 @@ func (b *Box) llmList(o output, user string) error {
 		return err
 	}
 	type item struct {
-		Provider string `json:"provider"`
-		Set      bool   `json:"set"`
-		Key      string `json:"key,omitempty"` // its last characters
-		BaseURL  string `json:"base_url"`
+		Provider     string `json:"provider"`
+		Subscription bool   `json:"subscription"` // a Claude or ChatGPT plan, not an API key
+		Set          bool   `json:"set"`
+		Key          string `json:"key,omitempty"` // its last characters
+		BaseURL      string `json:"base_url"`
 	}
 	var list []item
 	var text strings.Builder
 	w := tabwriter.NewWriter(&text, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "PROVIDER\tKEY\tIN YOUR VMS")
 	for _, p := range llmProviders {
-		it := item{Provider: p.name, Set: keys[p.name] != "", BaseURL: b.llm.URL() + "/" + p.name}
+		it := item{Provider: p.name, Subscription: p.plan, Set: keys[p.name] != "", BaseURL: b.llm.URL() + "/" + p.name}
+		if p.name == "claude" {
+			it.BaseURL = b.llm.URL() + "/anthropic"
+		}
 		shown := "not set"
-		if it.Set {
+		switch {
+		case it.Set && p.name == "chatgpt":
+			shown = "signed in"
+		case it.Set:
 			k := keys[p.name]
 			it.Key = "…" + k[max(0, len(k)-4):]
 			shown = it.Key
 		}
 		list = append(list, it)
-		fmt.Fprintf(w, "%s\t%s\t%s=%s\n", p.name, shown, p.baseEnv, it.BaseURL)
+		use := p.baseEnv + "=" + it.BaseURL
+		switch p.name {
+		case "claude":
+			use = "Claude Code (and OpenCode through it)"
+		case "chatgpt":
+			use = "Codex"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", p.name, shown, use)
 	}
 	w.Flush()
 	fmt.Fprintf(&text, "\nAdd or change a key: ssh %[1]s llm set <provider>; remove it: ssh %[1]s llm rm <provider>\n"+
-		"The key stays on the host, which adds it to the requests of your VMs.\nWhat they used: ssh %[1]s llm usage\n", b.name)
+		"The key stays on the host, which adds it to the requests of your VMs.\n"+
+		"claude and chatgpt are your own subscriptions, for your own VMs: ssh %[1]s llm set claude tells how.\n"+
+		"What they used: ssh %[1]s llm usage\n", b.name)
 	o.print(list, text.String())
 	return nil
 }
@@ -825,7 +962,9 @@ func (b *Box) llmUsage(o output, user string, args []string) error {
 	total, unknown := 0.0, false
 	for _, u := range list {
 		cost := "?"
-		if u.CostUSD != nil {
+		if isPlan(u.Provider) {
+			cost = "subscription"
+		} else if u.CostUSD != nil {
 			cost = fmt.Sprintf("$%.4f", *u.CostUSD)
 			total += *u.CostUSD
 		} else {

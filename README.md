@@ -239,7 +239,8 @@ ssh boxe images update                     an admin: download now a newer offici
 ssh boxe images default <version>          an admin: the image new VMs start from without --image
 ssh boxe llm                               your API keys for the models (all your VMs use them)
 ssh -t boxe llm set <anthropic|openai>     add or change a key: it is asked for, without showing it
-ssh boxe llm rm <anthropic|openai>         remove a key
+ssh boxe llm set <claude|chatgpt>          your own Claude or ChatGPT subscription, for Claude Code and Codex
+ssh boxe llm rm <provider>                 remove a key or a subscription
 ssh boxe llm usage [--days 30]             tokens and estimated cost of your VMs, per model
 ssh boxe token new [--label x] [--exp 30d] [--cmds ls,new]
                                            a token for the HTTPS API, shown once
@@ -290,6 +291,27 @@ help instead.
 `ssh boxe llm set anthropic < key.txt` reads it from a file. boxe checks it
 with the provider before saving it. Costs are estimated from list prices
 known to boxe (`?` for other models): the provider's bill is what counts.
+
+Members can also use their own Claude or ChatGPT subscription, for their own
+VMs only, as personal use of Claude Code and Codex. The login stays on the
+host and the gateway signs the agents' requests in, as with the keys:
+
+- Claude: run `claude setup-token` on your computer, then
+  `ssh -t boxe llm set claude` and paste the token. Claude Code in your VMs
+  uses the subscription, even with an Anthropic key in the account
+  (`boxeuntu configure` sets it in `~/.claude/settings.json`); other
+  programs, and Shelley, keep using the key. OpenCode can use it through
+  Claude Code: connect its Claude Agent provider once in the VM
+  (`opencode auth login claude-agent`, or `/connect` in OpenCode) and pick a
+  `claude-agent/...` model.
+- ChatGPT: sign in to Codex for boxe alone, in a folder of its own, and give
+  boxe that login: `export CODEX_HOME=$(mktemp -d); codex login --device-auth`,
+  then `ssh boxe llm set chatgpt < $CODEX_HOME/auth.json`. boxe refreshes
+  the login from then on, and a copy elsewhere stops working: never give it
+  your usual `~/.codex/auth.json`. Codex in your VMs uses the subscription.
+
+`ssh boxe llm usage` counts what the subscriptions were used for, without a
+cost.
 
 Once per computer: `ssh boxe ssh-config >> ~/.ssh/config` and
 `ssh boxe known-hosts >> ~/.ssh/known_hosts`.

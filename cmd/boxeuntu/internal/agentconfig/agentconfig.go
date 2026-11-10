@@ -2,7 +2,8 @@
 // gateway: the host adds the owner's API key to their requests. Claude
 // Code needs nothing for it: it reads ANTHROPIC_BASE_URL, which login
 // shells get. Codex, OpenCode and pi do not, so they get a config file
-// each, for the providers the owner has a key for.
+// each, for the providers the owner has a key for. The owner's
+// subscriptions go to Codex (its config file) and Claude Code (claude.go).
 //
 // Every agent also gets the computer tools (the MCP server "computer",
 // boxe-computer), with or without a gateway.
@@ -48,6 +49,8 @@ type Gateway struct {
 	URL       string // e.g. http://10.42.0.1:2998
 	Anthropic bool   // the owner has a key for the provider
 	OpenAI    bool
+	Claude    bool // the owner has a subscription, for Claude Code
+	ChatGPT   bool // the same, for Codex
 }
 
 // Discover asks the gateway at url which providers the VM's owner has a key
@@ -69,11 +72,17 @@ func Discover(ctx context.Context, client *http.Client, url string) (Gateway, er
 	}
 	sc := bufio.NewScanner(io.LimitReader(resp.Body, 1<<16))
 	for sc.Scan() {
+		line := sc.Text()
 		switch {
-		case strings.HasPrefix(sc.Text(), "export ANTHROPIC_BASE_URL="):
+		case strings.HasPrefix(line, "export ANTHROPIC_API_KEY="):
 			g.Anthropic = true
-		case strings.HasPrefix(sc.Text(), "export OPENAI_BASE_URL="):
+		case strings.HasPrefix(line, "export OPENAI_API_KEY="):
 			g.OpenAI = true
+		case strings.HasPrefix(line, "export BOXE_LLM_PLANS="):
+			for _, plan := range strings.Fields(strings.Trim(strings.TrimPrefix(line, "export BOXE_LLM_PLANS="), `"`)) {
+				g.Claude = g.Claude || plan == "claude"
+				g.ChatGPT = g.ChatGPT || plan == "chatgpt"
+			}
 		}
 	}
 	return g, sc.Err()
@@ -85,32 +94,59 @@ type File struct {
 	Agent   string
 	Path    string
 	Content []byte
+	Exec    bool // a script
+}
+
+// ClaudeSubscriptionScript runs Claude Code for OpenCode's Claude Agent
+// provider, which does not read ~/.claude/settings.json: it drops the API
+// key of the login shell, which would win over the subscription. The
+// gateway points OpenCode at it (OPENCODE_CLAUDE_PATH) when it is there.
+const ClaudeSubscriptionScript = ".config/boxeuntu/claude-subscription"
+
+func claudeSubscriptionScript(g Gateway) []byte {
+	if !g.Claude {
+		return nil
+	}
+	return []byte("#!/bin/sh\n# Written by boxeuntu: Claude Code for OpenCode, on your Claude subscription.\nunset ANTHROPIC_API_KEY\nexec claude \"$@\"\n")
 }
 
 // Files are the config files for g, with the computer tools if computer.
 // A zero g (no gateway) gives the computer tools alone.
 func Files(g Gateway, computer bool) []File {
 	files := []File{
-		{"codex", ".codex/config.toml", codexConfig(g, computer)},
-		{"opencode", ".config/opencode/opencode.json", openCodeConfig(g, computer)},
-		{"pi", ".pi/agent/models.json", piModels(g)},
+		{"codex", ".codex/config.toml", codexConfig(g, computer), false},
+		{"opencode", ".config/opencode/opencode.json", openCodeConfig(g, computer), false},
+		{"pi", ".pi/agent/models.json", piModels(g), false},
+		{"claude", ClaudeSubscriptionScript, claudeSubscriptionScript(g), true},
 	}
 	if computer {
 		// pi keeps its MCP servers in a file of their own.
 		files = append(files, File{"pi", ".pi/agent/mcp.json", jsonFile(map[string]any{
 			"mcpServers": map[string]any{"computer": map[string]any{"command": ComputerBin, "args": []string{"mcp"}}},
-		})})
+		}), false})
 	}
 	return files
 }
 
 func codexConfig(g Gateway, computer bool) []byte {
-	if !g.OpenAI && !computer {
+	if !g.OpenAI && !g.ChatGPT && !computer {
 		return nil
 	}
 	var b strings.Builder
 	b.WriteString("# Written by boxeuntu. Change this file and boxeuntu leaves it alone.\n")
-	if g.OpenAI {
+	switch {
+	case g.ChatGPT:
+		b.WriteString(`
+# Your ChatGPT subscription, through the boxe gateway, which signs you in.
+model_provider = "boxe"
+
+[model_providers.boxe]
+name = "boxe"
+base_url = "` + g.URL + `/chatgpt"
+wire_api = "responses"
+experimental_bearer_token = "` + placeholder + `"
+`)
+	case g.OpenAI:
 		b.WriteString(`
 # OpenAI models through the boxe gateway, which adds your key.
 model_provider = "boxe"
@@ -245,6 +281,11 @@ func Apply(home string, files []File) ([]Result, error) {
 		default:
 			if err := writeFile(path, f.Content); err != nil {
 				return results, err
+			}
+			if f.Exec {
+				if err := os.Chmod(path, 0o700); err != nil {
+					return results, err
+				}
 			}
 			res.Status = "written"
 			state[f.Path] = hash(f.Content)

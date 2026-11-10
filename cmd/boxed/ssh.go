@@ -196,8 +196,10 @@ func (b *Box) help(cmd string) string {
   SSH images prune                      an admin: delete now the old images no VM uses
   SSH images update                     an admin: download now a newer official image, if any
   SSH images default <version>          an admin: the image new VMs start from without --image
-  SSH llm                               your API keys for the models, used by all your VMs
+  SSH llm                               your API keys and subscriptions for the models, used by all your VMs
   SSH llm set <anthropic|openai>        add or change a key (asked for; ssh -t hides it)
+  SSH llm set <claude|chatgpt>          your Claude or ChatGPT plan, for Claude Code and Codex (tells how)
+  SSH llm rm <provider>                 remove a key or a subscription
   SSH llm usage [--days 30]             tokens and cost of your VMs, per model
   SSH token new [options]               a token for the HTTPS API (--label x --exp 30d --cmds ls,new)
   SSH token ls | token rm <id|label>    your tokens; delete one

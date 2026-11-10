@@ -4,6 +4,19 @@ What changed in each release of boxe. Versions follow
 [semantic versioning](https://semver.org); until 1.0, a minor version may
 change how boxe is installed or run, and its notes say how to upgrade.
 
+## Unreleased
+
+- **Subscriptions.** Each member can give boxe their own Claude or ChatGPT
+  subscription, once, and Claude Code and Codex in all their VMs use it
+  (`ssh boxe llm set claude`, `ssh boxe llm set chatgpt`, which tell how).
+  OpenCode uses the Claude one through Claude Code, with its Claude Agent
+  provider (`opencode auth login claude-agent` once in the VM).
+  Like the API keys, the login stays on the host; Shelley and other programs
+  keep using the keys. `ssh boxe llm usage` counts the subscriptions' tokens
+  apart, without a cost.
+  - VMs need the new `boxeuntu` (images from this release on) to set Claude
+    Code and Codex up for it.
+
 ## v0.2.0 (2026-11-08)
 
 - **Official images.** boxe now publishes boxeuntu, its base image, as

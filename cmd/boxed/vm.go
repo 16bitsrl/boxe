@@ -482,7 +482,7 @@ func (h *Hypervisor) agentsMD(v VM) string {
 	}
 	llm := "- Shelley uses the models and API keys its user added in it."
 	if h.LLMGateway != "" {
-		llm = fmt.Sprintf("- Models: the API keys of the user's boxe account are added by the host to requests through its gateway. Login shells get `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY` and `OPENAI_BASE_URL`/`OPENAI_API_KEY` for the providers with a key (the key is a placeholder; the host puts the real one in); Shelley uses the gateway too. If they are missing, the user adds a key from their computer with `ssh boxe llm set anthropic` (or `openai`); `ssh boxe llm usage` shows what was used. The gateway is %s.", h.LLMGateway)
+		llm = fmt.Sprintf("- Models: the API keys of the user's boxe account are added by the host to requests through its gateway. Login shells get `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY` and `OPENAI_BASE_URL`/`OPENAI_API_KEY` for the providers with a key (the key is a placeholder; the host puts the real one in); Shelley uses the gateway too. If they are missing, the user adds a key from their computer with `ssh boxe llm set anthropic` (or `openai`); `ssh boxe llm usage` shows what was used. With their Claude or ChatGPT subscription in the account (`ssh boxe llm set claude`, `chatgpt`), Claude Code and Codex use it instead, through the gateway as well; so does OpenCode with a `claude-agent/...` model, once its Claude Agent provider is connected (`opencode auth login claude-agent`). The gateway is %s.", h.LLMGateway)
 	}
 	sleep := ""
 	if h.SleepDir != "" {

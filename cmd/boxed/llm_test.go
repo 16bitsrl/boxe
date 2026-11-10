@@ -26,6 +26,7 @@ type fakeProvider struct {
 	bodies   []string
 	answer   string        // body of the answer
 	sse      bool          // answer as a stream of server-sent events
+	untyped  bool          // the answer has no Content-Type, as ChatGPT's events
 	validKey string        // /models answers 401 to other keys
 	hold     chan struct{} // if set, answers wait for it to close
 }
@@ -37,7 +38,7 @@ func newFakeProvider(t *testing.T) *fakeProvider {
 		f.mu.Lock()
 		f.reqs = append(f.reqs, r)
 		f.bodies = append(f.bodies, string(body))
-		answer, sse, valid, hold := f.answer, f.sse, f.validKey, f.hold
+		answer, sse, untyped, valid, hold := f.answer, f.sse, f.untyped, f.validKey, f.hold
 		f.mu.Unlock()
 		if hold != nil {
 			<-hold
@@ -56,6 +57,9 @@ func newFakeProvider(t *testing.T) *fakeProvider {
 			w.Header().Set("Content-Type", "text/event-stream")
 		} else {
 			w.Header().Set("Content-Type", "application/json")
+		}
+		if untyped {
+			w.Header()["Content-Type"] = nil // not even guessed
 		}
 		io.WriteString(w, answer)
 	}))
@@ -149,7 +153,8 @@ func TestLLMKeys(t *testing.T) {
 		BaseURL  string `json:"base_url"`
 	}
 	c.json("alice", "llm --json", &list)
-	if len(list) != 2 || list[0].Provider != "anthropic" || !list[0].Set || list[1].Set ||
+	// The keys, then the subscriptions.
+	if len(list) != 4 || list[0].Provider != "anthropic" || !list[0].Set || list[1].Set || list[2].Provider != "claude" || list[3].Set ||
 		list[0].BaseURL != "http://10.42.0.1:2998/anthropic" {
 		t.Errorf("llm --json: %+v", list)
 	}
