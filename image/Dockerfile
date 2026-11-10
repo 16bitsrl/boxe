@@ -87,6 +87,9 @@ RUN chmod 755 /usr/local/bin/boxeuntu /usr/local/bin/boxe-computer && \
     rm -rf /usr/local/bin/exeuntu /etc/opencode/plugins /home/boxedev/.pi/agent/extensions/exe-dev \
         /etc/systemd/system/exe-setup.service && \
     systemctl enable boxe-agents.service
+# OpenCode runs Claude Code on a Claude subscription from 2.2.3 on; exeuntu
+# has 2.2.0. Pinned like the base image.
+RUN boxeuntu update opencode --version 2.2.7 && opencode --version | grep -qx 'opencode v2.2.7'
 # Instructions for the coding agents in the image (Claude, Codex, opencode,
 # pi, Shelley): exeuntu's describe exe.dev. boxed writes ours, with this
 # installation's addresses, through the configuration disk.
