@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	gossh "golang.org/x/crypto/ssh"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -359,5 +360,45 @@ func TestChatGPTRemovedWhileRefreshing(t *testing.T) {
 	<-removed
 	if keys, _ := c.box.store.LLMKeys("alice"); keys["chatgpt"] != "" {
 		t.Errorf("the login came back after llm rm: %s", keys["chatgpt"])
+	}
+}
+
+// With ssh -t, the instructions before the token are shown as written, not
+// wrapped where the terminal counts its line as full, and the token is read.
+func TestSubscriptionAskedOnATerminal(t *testing.T) {
+	c, _, _, _ := planCLI(t, "alice")
+	s, err := c.conn["alice"].NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.RequestPty("xterm", 40, 80, gossh.TerminalModes{}); err != nil {
+		t.Fatal(err)
+	}
+	p := &prompt{t: t, s: s}
+	p.in, _ = s.StdinPipe()
+	stdout, _ := s.StdoutPipe()
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := stdout.Read(buf)
+			p.mu.Lock()
+			p.out.Write(buf[:n])
+			p.mu.Unlock()
+			if err != nil {
+				return
+			}
+		}
+	}()
+	if err := s.Start("llm set claude"); err != nil {
+		t.Fatal(err)
+	}
+	got := p.wait("is not shown): ")
+	if !strings.Contains(got, "Claude account.\r\nPaste the token") {
+		t.Errorf("the instructions on the terminal:\n%q", got)
+	}
+	p.typ("sk-ant-oat01-alice\r")
+	if got := p.wait("Claude Code"); strings.Contains(got, "oat01-alice") {
+		t.Errorf("the token was shown: %q", got)
 	}
 }

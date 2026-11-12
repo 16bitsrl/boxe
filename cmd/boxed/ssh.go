@@ -226,8 +226,10 @@ func (b *Box) session(s ssh.Session) {
 		return
 	}
 	ask := func(prompt string) (string, error) {
-		if _, _, isPty := s.Pty(); isPty {
-			return term.NewTerminal(s, "").ReadPassword(prompt)
+		if pty, _, isPty := s.Pty(); isPty {
+			t := term.NewTerminal(s, "")
+			t.SetSize(pty.Window.Width, pty.Window.Height)
+			return askOn(t, prompt)
 		}
 		fmt.Fprint(s.Stderr(), prompt)
 		return readLine(s)

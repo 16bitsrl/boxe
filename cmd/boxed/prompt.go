@@ -40,7 +40,7 @@ func (b *Box) prompt(s ssh.Session, user string, size ssh.Window, resized <-chan
 		case "exit", "quit":
 			return
 		}
-		if err := b.run(t, t.ReadPassword, user, line, ""); err != nil {
+		if err := b.run(t, func(p string) (string, error) { return askOn(t, p) }, user, line, ""); err != nil {
 			fmt.Fprintln(t, "error:", err)
 		}
 	}
@@ -109,4 +109,17 @@ func (b *Box) complete(user, line string, pos int) (string, int, bool) {
 	}
 	head := before[:start] + common
 	return head + string(r[pos:]), len([]rune(head)), true
+}
+
+// askOn reads an answer on t without showing it. The lines of prompt before
+// the last are written as they are: t counts its prompt as one line, and
+// would wrap them where that line fills the terminal.
+func askOn(t *term.Terminal, prompt string) (string, error) {
+	if i := strings.LastIndex(prompt, "\n"); i >= 0 {
+		if _, err := t.Write([]byte(prompt[:i+1])); err != nil {
+			return "", err
+		}
+		prompt = prompt[i+1:]
+	}
+	return t.ReadPassword(prompt)
 }
