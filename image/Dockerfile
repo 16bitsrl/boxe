@@ -1,7 +1,7 @@
 # boxeuntu, the base image of the microVMs: exeuntu (exe.dev, Apache 2.0) plus a layer of ours.
 # Build: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxeuntu ./cmd/boxeuntu && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxe-computer ./cmd/boxe-computer && docker build --build-arg BOXE_SOURCE=$(git describe --tags --always) -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>
 # Pinned: a rebuild must not change what VMs get. To update: pull, read what changed, change the digest.
-FROM ghcr.io/boldsoftware/exeuntu@sha256:74db1d70f105846ab63a17aeca503f82309f565ead347ffccd3201ffd047ca36
+FROM ghcr.io/boldsoftware/exeuntu@sha256:e10847fc58d2b728393edb21159ae2edd5bc42ea2d7c6fa4a1488235fb52715d
 
 # exeuntu's user is exedev: ours is boxedev, same UID and permissions.
 # exeuntu works in /home/exedev, and docker would make it again at every step.
