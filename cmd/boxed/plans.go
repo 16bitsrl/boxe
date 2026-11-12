@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -163,28 +164,53 @@ func (g *Gateway) chatgptAccess(user string) (string, string, error) {
 	m := g.chatgptLock(user)
 	m.Lock()
 	defer m.Unlock()
-	keys, err := g.store.LLMKeys(user)
-	if err != nil {
-		return "", "", err
+	g.mu.Lock()
+	text, kept := g.chatgptKept[user]
+	g.mu.Unlock()
+	if !kept {
+		keys, err := g.store.LLMKeys(user)
+		if err != nil {
+			return "", "", err
+		}
+		text = keys["chatgpt"]
 	}
 	var login chatgptLogin
-	if err := json.Unmarshal([]byte(keys["chatgpt"]), &login); err != nil {
+	if err := json.Unmarshal([]byte(text), &login); err != nil {
 		return "", "", fmt.Errorf("the saved login is broken: %v", err)
 	}
-	if time.Until(time.Unix(login.Expires, 0)) > chatgptRefreshMargin {
-		return login.Access, login.Account, nil
+	if time.Until(time.Unix(login.Expires, 0)) <= chatgptRefreshMargin {
+		fresh, err := g.refreshChatGPT(login.Refresh)
+		if err != nil {
+			return "", "", err
+		}
+		fresh.Account = login.Account
+		b, _ := json.Marshal(fresh)
+		login, text, kept = fresh, string(b), true
 	}
-	fresh, err := g.refreshChatGPT(login.Refresh)
-	if err != nil {
-		return "", "", err
+	if kept {
+		// The old refresh token is spent: without the new one the login is
+		// lost. Until it is saved, it is kept here.
+		err := g.store.SetLLMKey(user, "chatgpt", text)
+		g.mu.Lock()
+		if err != nil {
+			g.chatgptKept[user] = text
+		} else {
+			delete(g.chatgptKept, user)
+		}
+		g.mu.Unlock()
+		if err != nil {
+			log.Printf("chatgpt login of %s: could not save the refreshed login, kept until it can be: %v", user, err)
+		}
 	}
-	fresh.Account = login.Account
-	saved, _ := json.Marshal(fresh)
-	// The old refresh token is spent: without the new one the login is lost.
-	if err := g.store.SetLLMKey(user, "chatgpt", string(saved)); err != nil {
-		return "", "", fmt.Errorf("could not save the refreshed login: %v", err)
-	}
-	return fresh.Access, fresh.Account, nil
+	return login.Access, login.Account, nil
+}
+
+// forgetKeptChatGPT drops the refreshed login of user not saved yet, when
+// they replace or remove it. Under chatgptLock.
+func (g *Gateway) forgetKeptChatGPT(user string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.chatgptKept, user)
 }
 
 // chatgptLock is held while user's ChatGPT login changes: refreshed, or

@@ -70,9 +70,10 @@ type Gateway struct {
 	chatgptTokenURL string            // where ChatGPT logins are refreshed
 	client          *http.Client
 
-	mu       sync.Mutex
-	busy     map[string]int         // VM -> requests under way
-	chatgpts map[string]*sync.Mutex // user -> their ChatGPT login, while it is refreshed
+	mu          sync.Mutex
+	busy        map[string]int         // VM -> requests under way
+	chatgpts    map[string]*sync.Mutex // user -> their ChatGPT login, while it is refreshed
+	chatgptKept map[string]string      // user -> their refreshed ChatGPT login, not saved yet
 }
 
 // llmPerVM is how many requests a VM can have under way: each can hold
@@ -80,7 +81,7 @@ type Gateway struct {
 const llmPerVM = 16
 
 func newGateway(store *Store, addr string) *Gateway {
-	g := &Gateway{store: store, addr: addr, upstream: map[string]string{}, busy: map[string]int{}, chatgpts: map[string]*sync.Mutex{},
+	g := &Gateway{store: store, addr: addr, upstream: map[string]string{}, busy: map[string]int{}, chatgpts: map[string]*sync.Mutex{}, chatgptKept: map[string]string{},
 		chatgptTokenURL: chatgptTokenURL, client: &http.Client{Timeout: 15 * time.Second}}
 	for _, p := range llmProviders {
 		g.upstream[p.name] = p.upstream
@@ -179,8 +180,13 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !add {
 		keys[p.name] = ""
 	}
+	if !g.start(v) {
+		http.Error(w, "boxe gateway: too many requests under way from this VM", http.StatusTooManyRequests)
+		return
+	}
+	defer g.end(v)
 	account := ""
-	if p.name == "chatgpt" {
+	if p.name == "chatgpt" { // within the limit: a slow refresh holds no more than it
 		var err error
 		if keys[p.name], account, err = g.chatgptAccess(v.Owner); err != nil {
 			log.Printf("chatgpt login of %s: %v", v.Owner, err)
@@ -188,11 +194,6 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if !g.start(v) {
-		http.Error(w, "boxe gateway: too many requests under way from this VM", http.StatusTooManyRequests)
-		return
-	}
-	defer g.end(v)
 	if v.Egress == egressIntegrations && r.Method != http.MethodGet && r.Method != http.MethodHead {
 		if err := noWebTools(r, clean); err != nil {
 			http.Error(w, "boxe gateway: "+err.Error(), http.StatusForbidden)
@@ -800,6 +801,7 @@ func (b *Box) cmdLLM(o output, ask func(string) (string, error), user string, ar
 				m := b.llm.chatgptLock(user)
 				m.Lock()
 				defer m.Unlock()
+				b.llm.forgetKeptChatGPT(user)
 			}
 			if sub == "set" {
 				return b.store.SetLLMKey(user, p.name, key)

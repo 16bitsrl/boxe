@@ -225,11 +225,14 @@ func (b *Box) session(s ssh.Session) {
 		s.Exit(0)
 		return
 	}
+	var t *term.Terminal // one per session: it may have read ahead
 	ask := func(prompt string) (string, error) {
 		if pty, _, isPty := s.Pty(); isPty {
-			t := term.NewTerminal(s, "")
-			if pty.Window.Width > 0 {
-				t.SetSize(pty.Window.Width, pty.Window.Height)
+			if t == nil {
+				t = term.NewTerminal(s, "")
+				if pty.Window.Width > 0 {
+					t.SetSize(pty.Window.Width, pty.Window.Height)
+				}
 			}
 			return askOn(t, prompt)
 		}

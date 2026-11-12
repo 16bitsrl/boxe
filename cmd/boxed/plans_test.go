@@ -408,3 +408,119 @@ func askedOnATerminal(t *testing.T, width int) {
 		t.Errorf("the token was shown: %q", got)
 	}
 }
+
+// While a refresh is slow, a VM still cannot have more than llmPerVM
+// requests under way: the others are turned away at once, not left waiting.
+func TestChatGPTRefreshWithinTheLimit(t *testing.T) {
+	c, _, chatgpt, auth := planCLI(t, "alice")
+	c.must("alice", "new test")
+	g := c.box.llm
+	auth.lifetime = time.Minute // the next request refreshes
+	c.setKey("alice", "chatgpt", authJSON("rt-1"))
+	chatgpt.answer = `{}`
+	arrived, hold := make(chan struct{}), make(chan struct{})
+	auth.mu.Lock()
+	auth.arrived, auth.hold = arrived, hold
+	auth.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for range llmPerVM {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			llmRequest(g, "10.42.0.2", "POST", "/chatgpt/responses", `{}`, map[string]string{"Authorization": "Bearer boxe"})
+		}()
+	}
+	<-arrived
+	time.Sleep(50 * time.Millisecond) // the others wait for the refresh
+	one := make(chan int)
+	go func() {
+		one <- llmRequest(g, "10.42.0.2", "POST", "/chatgpt/responses", `{}`, map[string]string{"Authorization": "Bearer boxe"}).Code
+	}()
+	select {
+	case code := <-one:
+		if code != http.StatusTooManyRequests {
+			t.Errorf("one request too many: %d", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("one request too many waits for the refresh")
+	}
+	close(hold)
+	wg.Wait()
+}
+
+// If the refreshed login cannot be saved, boxed keeps it and saves it
+// later: the old refresh token is spent, and without the new one the
+// member would have to sign in again.
+func TestChatGPTRefreshedButNotSaved(t *testing.T) {
+	c, _, chatgpt, auth := planCLI(t, "alice")
+	c.must("alice", "new test")
+	g := c.box.llm
+	auth.lifetime = time.Minute // every request refreshes
+	c.setKey("alice", "chatgpt", authJSON("rt-1"))
+	chatgpt.answer = `{}`
+	ask := func() int {
+		return llmRequest(g, "10.42.0.2", "POST", "/chatgpt/responses", `{}`, map[string]string{"Authorization": "Bearer boxe"}).Code
+	}
+
+	c.box.store.db.Exec("PRAGMA query_only = ON") // the disk is full
+	if code := ask(); code != 200 {
+		t.Errorf("refreshed but not saved: %d", code)
+	}
+	c.box.store.db.Exec("PRAGMA query_only = OFF")
+	if code := ask(); code != 200 {
+		t.Errorf("after the disk is back: %d", code)
+	}
+	keys, _ := c.box.store.LLMKeys("alice")
+	var login chatgptLogin
+	json.Unmarshal([]byte(keys["chatgpt"]), &login)
+	auth.mu.Lock()
+	valid := auth.valid
+	auth.mu.Unlock()
+	if login.Refresh != valid {
+		t.Errorf("saved refresh token %q, OpenAI takes %q", login.Refresh, valid)
+	}
+
+	// A login replaced meanwhile wins over the one kept.
+	c.box.store.db.Exec("PRAGMA query_only = ON")
+	ask()
+	c.box.store.db.Exec("PRAGMA query_only = OFF")
+	c.must("alice", "llm rm chatgpt")
+	if code := ask(); code != 401 {
+		t.Errorf("removed login used: %d", code)
+	}
+}
+
+// auth.json pasted at once in ssh -t boxe llm set chatgpt: every line read.
+func TestChatGPTPastedOnATerminal(t *testing.T) {
+	c, _, _, _ := planCLI(t, "alice")
+	s, err := c.conn["alice"].NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.RequestPty("xterm", 40, 80, gossh.TerminalModes{}); err != nil {
+		t.Fatal(err)
+	}
+	p := &prompt{t: t, s: s}
+	p.in, _ = s.StdinPipe()
+	stdout, _ := s.StdoutPipe()
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := stdout.Read(buf)
+			p.mu.Lock()
+			p.out.Write(buf[:n])
+			p.mu.Unlock()
+			if err != nil {
+				return
+			}
+		}
+	}()
+	if err := s.Start("llm set chatgpt"); err != nil {
+		t.Fatal(err)
+	}
+	p.wait("auth.json")
+	p.typ(strings.ReplaceAll(authJSON("rt-1"), "\n", "\r") + "\r")
+	p.wait("Codex")
+}
