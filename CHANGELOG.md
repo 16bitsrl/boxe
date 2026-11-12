@@ -4,7 +4,7 @@ What changed in each release of boxe. Versions follow
 [semantic versioning](https://semver.org); until 1.0, a minor version may
 change how boxe is installed or run, and its notes say how to upgrade.
 
-## Unreleased
+## v0.3.0 (2026-11-12)
 
 - **Subscriptions.** Each member can give boxe their own Claude or ChatGPT
   subscription, once, and Claude Code and Codex in all their VMs use it
@@ -14,8 +14,16 @@ change how boxe is installed or run, and its notes say how to upgrade.
   Like the API keys, the login stays on the host; Shelley and other programs
   keep using the keys. `ssh boxe llm usage` counts the subscriptions' tokens
   apart, without a cost.
-  - VMs need the new `boxeuntu` (images from this release on) to set Claude
-    Code and Codex up for it.
+  - VMs need the new `boxeuntu` to set Claude Code and Codex up for it, and
+    OpenCode 2.2.3 or later for Claude Agent: the image `boxeuntu:20261110`
+    and later have both, so VMs made from them are ready. In older VMs
+    Codex and OpenCode keep using the API keys, and so does Claude Code if
+    there is an Anthropic key.
+  - boxed keeps the ChatGPT login refreshed by itself: give it a login made
+    for boxe alone, not your usual `~/.codex/auth.json`, which would stop
+    working.
+- `ssh -t boxe llm set ...` shows its instructions as written, without a
+  line broken at the 80th column, and reads an `auth.json` pasted whole.
 
 ## v0.2.0 (2026-11-08)
 
