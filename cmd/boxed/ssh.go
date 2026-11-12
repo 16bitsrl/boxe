@@ -228,7 +228,9 @@ func (b *Box) session(s ssh.Session) {
 	ask := func(prompt string) (string, error) {
 		if pty, _, isPty := s.Pty(); isPty {
 			t := term.NewTerminal(s, "")
-			t.SetSize(pty.Window.Width, pty.Window.Height)
+			if pty.Window.Width > 0 {
+				t.SetSize(pty.Window.Width, pty.Window.Height)
+			}
 			return askOn(t, prompt)
 		}
 		fmt.Fprint(s.Stderr(), prompt)

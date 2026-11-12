@@ -366,13 +366,19 @@ func TestChatGPTRemovedWhileRefreshing(t *testing.T) {
 // With ssh -t, the instructions before the token are shown as written, not
 // wrapped where the terminal counts its line as full, and the token is read.
 func TestSubscriptionAskedOnATerminal(t *testing.T) {
+	for _, width := range []int{80, 0} { // 0: a terminal that does not say
+		t.Run(fmt.Sprint(width), func(t *testing.T) { askedOnATerminal(t, width) })
+	}
+}
+
+func askedOnATerminal(t *testing.T, width int) {
 	c, _, _, _ := planCLI(t, "alice")
 	s, err := c.conn["alice"].NewSession()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.RequestPty("xterm", 40, 80, gossh.TerminalModes{}); err != nil {
+	if err := s.RequestPty("xterm", 40, width, gossh.TerminalModes{}); err != nil {
 		t.Fatal(err)
 	}
 	p := &prompt{t: t, s: s}
