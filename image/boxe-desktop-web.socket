@@ -1,4 +1,4 @@
-# KasmVNC, the desktop in the browser: boxed serves it at
+# voxl, the desktop in the browser: boxed serves it at
 # https://<vm>--desktop.<domain> to who may use the VM (owner, access). Port 2998 is outside
 # 3000-9999, the ports the whole team reaches. The first connection starts
 # the desktop.

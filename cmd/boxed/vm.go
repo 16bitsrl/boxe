@@ -477,7 +477,8 @@ func (h *Hypervisor) agentsMD(v VM) string {
 	if h.WebDomain != "" {
 		web = fmt.Sprintf("- Web: an HTTP server on port 8000 is published at https://%[1]s.%[2]s, ports 3000-9999 at https://%[1]s--<port>.%[2]s (e.g. https://%[1]s--3000.%[2]s). HTTPS ends at the proxy: serve plain HTTP and listen on 0.0.0.0, not 127.0.0.1.\n"+
 			"- Only logged-in members of the team reach these URLs. The proxy sends the user's email in the `X-Box-Email` header (it drops any `X-Box-*` header sent by clients) and `X-Forwarded-Proto: https`. Visitors with a share link (`ssh boxe share`) come without `X-Box-Email`.\n"+
-			"- A desktop with Google Chrome: `sudo systemctl start boxe-desktop`, then run graphical programs with `DISPLAY=:1` (e.g. a headed browser to try a UI). Your user watches it at https://%[1]s--desktop.%[2]s.\n"+
+			"- A desktop with Google Chrome: `sudo systemctl start boxe-desktop`, then run graphical programs with `DISPLAY=:1`. Your user watches it, and hears its sound, at https://%[1]s--desktop.%[2]s.\n"+
+			"- To use a web page (try a UI, read a site, fill a form), drive that Chrome with the MCP tools of `browse` if you have them; Shelley and scripts use the `browse` command (`browse skill` explains it), after starting the desktop. Your user sees the tabs you open and can take over, e.g. for a login.\n"+
 			"- To see and drive the desktop yourself, use the MCP tool `computer` if you have it, or the command line: `boxe-computer screenshot --out /tmp/screen.png`, then read the image; `boxe-computer left_click X Y`, `boxe-computer type TEXT`, `boxe-computer key ctrl+l`. Coordinates are pixels of the last screenshot; the desktop starts by itself.", v.Name, h.WebDomain)
 	}
 	llm := "- Shelley uses the models and API keys its user added in it."

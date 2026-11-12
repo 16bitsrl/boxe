@@ -68,7 +68,11 @@ jobs:
             -t boxeuntu:build image/
           # What boxe needs from it.
           docker run --rm --entrypoint sh boxeuntu:build -c \
-            'set -e; id boxedev; for f in boxeuntu boxe-computer boxe-init; do test -x /usr/local/bin/$f; done; test -x /usr/bin/xdotool; cat /etc/boxe-image'
+            'set -e; id boxedev; for f in boxeuntu boxe-computer boxe-init; do test -x /usr/local/bin/$f; done; test -x /usr/bin/xdotool
+              LD_BIND_NOW=1 voxl --version; test -x /usr/bin/Xvfb; test -x /usr/bin/pulseaudio
+              su boxedev -c "browse --version"; test -s /usr/local/share/boxe/browse-extension/browse.crx
+              grep -q "$(cat /usr/local/share/boxe/browse-extension/id);file://" /etc/opt/chrome/policies/managed/boxe.json
+              cat /etc/boxe-image'
 
       - name: Publish
         if: github.ref == 'refs/heads/main'

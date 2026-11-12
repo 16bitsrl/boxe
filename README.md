@@ -135,10 +135,17 @@ before you trust it with anything.
   shared team key and no limit on spending: each member pays their own
   provider bill.
 - **Desktop**: every VM has a desktop with Google Chrome at
-  `https://<vm>--desktop.<domain>` (KasmVNC), for its owner (and the members
-  with access) only. It starts on
-  first use. Agents in the VM use it with `DISPLAY=:1`, for example to try a
-  UI in a real browser while you watch.
+  `https://<vm>--desktop.<domain>`, for its owner (and the members with
+  access) only, streamed by [voxl](https://github.com/tembo/voxl): it follows
+  the size of your window, plays its sound, shares the clipboard both ways
+  and moves files (the button at the top right). It starts on first use.
+  Agents in the VM use it with `DISPLAY=:1`.
+- **Browser use**: agents drive that Chrome with
+  [browse](https://github.com/anomalyco/browse), so you see the tabs they
+  open and can take over, for example to log in. Claude Code, Codex, OpenCode
+  and pi in the VM get its MCP tools (`browse`); the first use starts the
+  desktop. browse and its extension come with the image, at the same
+  version: nothing is downloaded from the Chrome Web Store.
 - **Computer use**: agents can also see and drive the desktop themselves.
   Claude Code, Codex, OpenCode and pi in the VM get an MCP tool, `computer`;
   Shelley and scripts use the `boxe-computer` command (`boxe-computer
@@ -663,5 +670,6 @@ Cloudflare, and nothing listens on the internet.
 
 Apache License 2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). The base
 image builds on exeuntu by Bold Software (exe.dev) and ships their Shelley,
-both also under the Apache License 2.0. It installs KasmVNC, under the GNU
-GPL 2.0: whoever distributes a built image must also offer its source.
+both also under the Apache License 2.0. It builds voxl (MIT), whose binary
+links x264, under the GNU GPL 2.0: whoever distributes a built image must
+also offer its source.

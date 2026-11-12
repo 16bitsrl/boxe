@@ -1,0 +1,14 @@
+[Unit]
+Description=boxe desktop: the shared Google Chrome, which agents drive with browse
+After=boxe-desktop.service
+BindsTo=boxe-desktop.service
+
+[Service]
+User=boxedev
+Environment=DISPLAY=:1 HOME=/home/boxedev
+ExecStart=/usr/bin/google-chrome --no-first-run --no-default-browser-check --password-store=basic
+# Once per VM, in the background: Chrome installs browse's extension on its
+# first start, then browse pairs with it.
+ExecStartPost=/bin/sh -c '/usr/local/lib/boxe/browse-pair.sh &'
+# Closed by hand, it stays closed: the next agent that needs it starts it.
+Restart=on-failure

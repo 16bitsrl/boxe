@@ -43,7 +43,7 @@ func TestDiscoverFailsWhenTheGatewayDoes(t *testing.T) {
 
 func TestFilesPointAgentsAtTheGateway(t *testing.T) {
 	both := map[string]string{}
-	for _, f := range Files(Gateway{URL: "http://10.42.0.1:2998", Anthropic: true, OpenAI: true}, false) {
+	for _, f := range Files(Gateway{URL: "http://10.42.0.1:2998", Anthropic: true, OpenAI: true}, false, false) {
 		both[f.Agent] = string(f.Content)
 	}
 	if !strings.Contains(both["codex"], `base_url = "http://10.42.0.1:2998/openai"`) {
@@ -65,7 +65,7 @@ func TestFilesPointAgentsAtTheGateway(t *testing.T) {
 	}
 
 	// Only Anthropic: Codex gets nothing, OpenCode starts on Claude.
-	for _, f := range Files(Gateway{URL: "http://gw", Anthropic: true}, false) {
+	for _, f := range Files(Gateway{URL: "http://gw", Anthropic: true}, false, false) {
 		switch {
 		case f.Agent == "codex" && f.Content != nil:
 			t.Errorf("codex config without an OpenAI key:\n%s", f.Content)
@@ -74,7 +74,7 @@ func TestFilesPointAgentsAtTheGateway(t *testing.T) {
 		}
 	}
 	// No key at all: no files.
-	for _, f := range Files(Gateway{URL: "http://gw"}, false) {
+	for _, f := range Files(Gateway{URL: "http://gw"}, false, false) {
 		if f.Content != nil {
 			t.Errorf("%s config without keys:\n%s", f.Agent, f.Content)
 		}
@@ -94,7 +94,7 @@ func byPath(files []File) map[string]string {
 func TestFilesGiveTheComputerTools(t *testing.T) {
 	const codexMCP = "[mcp_servers.computer]\ncommand = \"/usr/local/bin/boxe-computer\"\nargs = [\"mcp\"]\n"
 	for _, g := range []Gateway{{}, {URL: "http://gw", Anthropic: true, OpenAI: true}} {
-		f := byPath(Files(g, true))
+		f := byPath(Files(g, true, false))
 		codex := f[".codex/config.toml"]
 		if !strings.Contains(codex, codexMCP) || strings.Contains(codex, "model_provider") != g.OpenAI {
 			t.Errorf("codex with %+v:\n%s", g, codex)
@@ -138,8 +138,50 @@ func TestFilesGiveTheComputerTools(t *testing.T) {
 		}
 	}
 	// No boxe-computer (an older image): no pi mcp.json at all.
-	if _, ok := byPath(Files(Gateway{URL: "http://gw", OpenAI: true}, false))[".pi/agent/mcp.json"]; ok {
+	if _, ok := byPath(Files(Gateway{URL: "http://gw", OpenAI: true}, false, false))[".pi/agent/mcp.json"]; ok {
 		t.Error("pi mcp.json without the computer tools")
+	}
+}
+
+// The browser tools (browse, through boxe-computer browse-mcp) go next to
+// the computer tools, in every agent's file.
+func TestFilesGiveTheBrowserTools(t *testing.T) {
+	const codexMCP = "[mcp_servers.browse]\ncommand = \"/usr/local/bin/boxe-computer\"\nargs = [\"browse-mcp\"]\n"
+	f := byPath(Files(Gateway{}, true, true))
+	if codex := f[".codex/config.toml"]; !strings.Contains(codex, codexMCP) || !strings.Contains(codex, "[mcp_servers.computer]") {
+		t.Errorf("codex:\n%s", codex)
+	}
+	var oc struct {
+		MCP struct {
+			Servers map[string]struct {
+				Type    string
+				Command []string
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(f[".config/opencode/opencode.json"]), &oc); err != nil {
+		t.Fatal(err)
+	}
+	if b := oc.MCP.Servers["browse"]; b.Type != "local" || strings.Join(b.Command, " ") != "/usr/local/bin/boxe-computer browse-mcp" || len(oc.MCP.Servers) != 2 {
+		t.Errorf("opencode:\n%s", f[".config/opencode/opencode.json"])
+	}
+	var pi struct {
+		MCPServers map[string]struct {
+			Command string
+			Args    []string
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(f[".pi/agent/mcp.json"]), &pi); err != nil {
+		t.Fatal(err)
+	}
+	if b := pi.MCPServers["browse"]; b.Command != "/usr/local/bin/boxe-computer" || strings.Join(b.Args, " ") != "browse-mcp" || len(pi.MCPServers) != 2 {
+		t.Errorf("pi mcp.json:\n%s", f[".pi/agent/mcp.json"])
+	}
+	// Without browse (an older image) nobody gets them.
+	for path, content := range byPath(Files(Gateway{}, true, false)) {
+		if strings.Contains(content, "browse") {
+			t.Errorf("%s with the browser tools:\n%s", path, content)
+		}
 	}
 }
 
@@ -148,10 +190,10 @@ func TestFilesGiveTheComputerTools(t *testing.T) {
 func TestApplyAddsTheComputerToolsToOurFiles(t *testing.T) {
 	home := t.TempDir()
 	g := Gateway{URL: "http://gw", Anthropic: true, OpenAI: true}
-	statuses(t, home, Files(g, false))
+	statuses(t, home, Files(g, false, false))
 	pi := filepath.Join(home, ".pi/agent/models.json")
 	os.WriteFile(pi, []byte(`{"providers": {}}`), 0o600)
-	s := statuses(t, home, Files(g, true))
+	s := statuses(t, home, Files(g, true, false))
 	if s["codex"] != "written" || s["opencode"] != "written" || s["pi"] != "kept" || s["pi mcp"] != "written" {
 		t.Fatalf("statuses %v", s)
 	}
@@ -183,6 +225,36 @@ func TestAddClaudeComputerOnce(t *testing.T) {
 	// The user removes them: they are not added again.
 	there, calls = false, nil
 	if status, err := AddClaudeComputer(home, claude); err != nil || status != "" || calls != nil {
+		t.Fatalf("second run: %q, %v, calls %q", status, err, calls)
+	}
+}
+
+// The browser tools are added once too, apart from the computer tools: a
+// VM that had the computer tools already still gets them.
+func TestAddClaudeBrowseOnce(t *testing.T) {
+	home := t.TempDir()
+	var calls []string
+	claude := func(args ...string) error {
+		calls = append(calls, strings.Join(args, " "))
+		if args[1] == "get" {
+			return errors.New("exit status 1")
+		}
+		return nil
+	}
+	if _, err := AddClaudeComputer(home, claude); err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	status, err := AddClaudeBrowse(home, claude)
+	if err != nil || status != "added" {
+		t.Fatalf("first run: %q, %v", status, err)
+	}
+	want := []string{"mcp get browse", "mcp add --scope user browse -- /usr/local/bin/boxe-computer browse-mcp"}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls %q", calls)
+	}
+	calls = nil
+	if status, err := AddClaudeBrowse(home, claude); err != nil || status != "" || calls != nil {
 		t.Fatalf("second run: %q, %v, calls %q", status, err, calls)
 	}
 }
@@ -260,7 +332,7 @@ func TestApplyLeavesTheUsersFilesAlone(t *testing.T) {
 	home := t.TempDir()
 	codex := filepath.Join(home, ".codex/config.toml")
 	pi := filepath.Join(home, ".pi/agent/models.json")
-	both := Files(Gateway{URL: "http://gw", Anthropic: true, OpenAI: true}, false)
+	both := Files(Gateway{URL: "http://gw", Anthropic: true, OpenAI: true}, false, false)
 
 	// The user's own Codex config, there before boxeuntu ran.
 	os.MkdirAll(filepath.Dir(codex), 0o755)
@@ -280,7 +352,7 @@ func TestApplyLeavesTheUsersFilesAlone(t *testing.T) {
 
 	// The user edits pi's file: from then on it is theirs.
 	os.WriteFile(pi, []byte(`{"providers": {}}`), 0o600)
-	onlyAnthropic := Files(Gateway{URL: "http://gw", Anthropic: true}, false)
+	onlyAnthropic := Files(Gateway{URL: "http://gw", Anthropic: true}, false, false)
 	if s := statuses(t, home, onlyAnthropic); s["pi"] != "kept" || s["opencode"] != "written" || s["codex"] != "kept" {
 		t.Fatalf("after the user's edit: %v", s)
 	}
@@ -289,7 +361,7 @@ func TestApplyLeavesTheUsersFilesAlone(t *testing.T) {
 	}
 
 	// The owner removes their keys: our files go, theirs stay.
-	if s := statuses(t, home, Files(Gateway{URL: "http://gw"}, false)); s["opencode"] != "removed" || s["pi"] != "kept" || s["codex"] != "kept" {
+	if s := statuses(t, home, Files(Gateway{URL: "http://gw"}, false, false)); s["opencode"] != "removed" || s["pi"] != "kept" || s["codex"] != "kept" {
 		t.Fatalf("without keys: %v", s)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config/opencode/opencode.json")); !os.IsNotExist(err) {
@@ -299,7 +371,7 @@ func TestApplyLeavesTheUsersFilesAlone(t *testing.T) {
 
 func TestApplyTakesOverAFileThatAlreadyMatches(t *testing.T) {
 	home := t.TempDir()
-	files := Files(Gateway{URL: "http://gw", OpenAI: true}, false)
+	files := Files(Gateway{URL: "http://gw", OpenAI: true}, false, false)
 	path := filepath.Join(home, files[0].Path)
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, files[0].Content, 0o600)
@@ -307,7 +379,7 @@ func TestApplyTakesOverAFileThatAlreadyMatches(t *testing.T) {
 		t.Fatalf("status %v", s)
 	}
 	// Ours now: a change of gateway rewrites it.
-	if s := statuses(t, home, Files(Gateway{URL: "http://other", OpenAI: true}, false)); s["codex"] != "written" {
+	if s := statuses(t, home, Files(Gateway{URL: "http://other", OpenAI: true}, false, false)); s["codex"] != "written" {
 		t.Fatalf("status %v", s)
 	}
 	if !strings.Contains(read(t, path), "http://other/openai") {

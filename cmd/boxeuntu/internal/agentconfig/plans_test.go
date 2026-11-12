@@ -30,7 +30,7 @@ func TestDiscoverReadsSubscriptions(t *testing.T) {
 func TestCodexUsesTheChatGPTSubscription(t *testing.T) {
 	for _, g := range []Gateway{{URL: "http://gw", ChatGPT: true}, {URL: "http://gw", ChatGPT: true, OpenAI: true}} {
 		var codex string
-		for _, f := range Files(g, false) {
+		for _, f := range Files(g, false, false) {
 			if f.Agent == "codex" {
 				codex = string(f.Content)
 			}
@@ -47,7 +47,7 @@ func TestCodexUsesTheChatGPTSubscription(t *testing.T) {
 // the login shell, which would win over the subscription.
 func TestOpenCodeRunsClaudeCodeOnTheSubscription(t *testing.T) {
 	home, bin := t.TempDir(), t.TempDir()
-	if _, err := Apply(home, Files(Gateway{URL: "http://gw", Anthropic: true, Claude: true}, false)); err != nil {
+	if _, err := Apply(home, Files(Gateway{URL: "http://gw", Anthropic: true, Claude: true}, false, false)); err != nil {
 		t.Fatal(err)
 	}
 	script := filepath.Join(home, ClaudeSubscriptionScript)
@@ -59,7 +59,7 @@ func TestOpenCodeRunsClaudeCodeOnTheSubscription(t *testing.T) {
 	}
 
 	// Without the subscription it goes.
-	if _, err := Apply(home, Files(Gateway{URL: "http://gw", Anthropic: true}, false)); err != nil {
+	if _, err := Apply(home, Files(Gateway{URL: "http://gw", Anthropic: true}, false, false)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(script); !os.IsNotExist(err) {

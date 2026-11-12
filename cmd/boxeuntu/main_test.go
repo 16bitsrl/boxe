@@ -16,10 +16,13 @@ import (
 func TestConfigureWithoutAGateway(t *testing.T) {
 	home, dir := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
-	gatewayFile, computerBin, cli := agentconfig.GatewayFile, agentconfig.ComputerBin, claudeCLI
-	t.Cleanup(func() { agentconfig.GatewayFile, agentconfig.ComputerBin, claudeCLI = gatewayFile, computerBin, cli })
+	gatewayFile, computerBin, browseBin, cli := agentconfig.GatewayFile, agentconfig.ComputerBin, agentconfig.BrowseBin, claudeCLI
+	t.Cleanup(func() {
+		agentconfig.GatewayFile, agentconfig.ComputerBin, agentconfig.BrowseBin, claudeCLI = gatewayFile, computerBin, browseBin, cli
+	})
 	agentconfig.GatewayFile = filepath.Join(dir, "llm-gateway")
 	agentconfig.ComputerBin = filepath.Join(dir, "boxe-computer")
+	agentconfig.BrowseBin = filepath.Join(dir, "browse")
 
 	var calls []string
 	claudeCLI = func(context.Context) func(args ...string) error {
@@ -60,7 +63,23 @@ func TestConfigureWithoutAGateway(t *testing.T) {
 		t.Fatalf("claude calls %q", calls)
 	}
 	b, _ := os.ReadFile(filepath.Join(home, ".codex/config.toml"))
-	if !strings.Contains(string(b), "[mcp_servers.computer]") || strings.Contains(string(b), "model_provider") {
+	if !strings.Contains(string(b), "[mcp_servers.computer]") || strings.Contains(string(b), "model_provider") || strings.Contains(string(b), "browse") {
+		t.Fatalf("codex config:\n%s", b)
+	}
+
+	// browse in the image too: the browser tools as well.
+	os.WriteFile(agentconfig.BrowseBin, nil, 0o755)
+	out.Reset()
+	calls = nil
+	if err := run([]string{"configure"}, &out, 1000); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "claude: added the browser tools\n") ||
+		len(calls) != 2 || calls[1] != "mcp add --scope user browse -- "+agentconfig.ComputerBin+" browse-mcp" {
+		t.Fatalf("claude calls %q\n%s", calls, out.String())
+	}
+	b, _ = os.ReadFile(filepath.Join(home, ".codex/config.toml"))
+	if !strings.Contains(string(b), "[mcp_servers.browse]") {
 		t.Fatalf("codex config:\n%s", b)
 	}
 }
@@ -70,10 +89,13 @@ func TestConfigureWithoutAGateway(t *testing.T) {
 func TestConfigureWithTheGatewayDown(t *testing.T) {
 	home, dir := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
-	gatewayFile, computerBin, cli := agentconfig.GatewayFile, agentconfig.ComputerBin, claudeCLI
-	t.Cleanup(func() { agentconfig.GatewayFile, agentconfig.ComputerBin, claudeCLI = gatewayFile, computerBin, cli })
+	gatewayFile, computerBin, browseBin, cli := agentconfig.GatewayFile, agentconfig.ComputerBin, agentconfig.BrowseBin, claudeCLI
+	t.Cleanup(func() {
+		agentconfig.GatewayFile, agentconfig.ComputerBin, agentconfig.BrowseBin, claudeCLI = gatewayFile, computerBin, browseBin, cli
+	})
 	agentconfig.GatewayFile = filepath.Join(dir, "llm-gateway")
 	agentconfig.ComputerBin = filepath.Join(dir, "boxe-computer")
+	agentconfig.BrowseBin = filepath.Join(dir, "browse")
 	claudeCLI = func(context.Context) func(args ...string) error { return nil }
 	os.WriteFile(agentconfig.ComputerBin, nil, 0o755)
 	os.WriteFile(agentconfig.GatewayFile, []byte("http://127.0.0.1:1\n"), 0o644)

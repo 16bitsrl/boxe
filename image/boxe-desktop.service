@@ -1,11 +1,16 @@
 [Unit]
-Description=boxe desktop: KasmVNC on localhost:2997 (DISPLAY=:1)
+Description=boxe desktop: Xvfb (DISPLAY=:1) and voxl on localhost:2997
+# The shared Chrome comes with the desktop.
+Wants=boxe-chrome.service
 
 [Service]
 User=boxedev
-Environment=DISPLAY=:1 HOME=/home/boxedev
+Environment=DISPLAY=:1 HOME=/home/boxedev XDG_RUNTIME_DIR=/run/boxe-desktop
+# PulseAudio's socket: every program of boxedev finds it (desktop-client.conf).
+RuntimeDirectory=boxe-desktop
+RuntimeDirectoryMode=0700
 ExecStart=/usr/local/lib/boxe/desktop.sh
-# Ready once KasmVNC answers: the browser connects right after.
-ExecStartPost=/bin/sh -c 'until curl -sf -o /dev/null http://127.0.0.1:2997/; do sleep 0.1; done'
+# Ready once voxl answers: the browser connects right after.
+ExecStartPost=/bin/sh -c 'until curl -sf -o /dev/null http://127.0.0.1:2997/healthz; do sleep 0.1; done'
 TimeoutStartSec=20
 Restart=on-failure

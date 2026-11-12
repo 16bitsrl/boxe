@@ -24,7 +24,7 @@ import (
 // https://<vm>--<port>.<domain> for ports 3000-9999, to members of the team
 // logged in on the IdP, and to whoever opens a share link for that host;
 // https://<vm>--agent.<domain> (Shelley), https://<vm>--desktop.<domain>
-// (noVNC) and https://<vm>--term.<domain> (term.go) only to the VM's owner
+// (voxl) and https://<vm>--term.<domain> (term.go) only to the VM's owner
 // and the members with access. TLS ends at the proxy in front of boxed.
 //
 // VMs are untrusted, so each host has its own host-only session cookie that
@@ -88,7 +88,7 @@ const (
 	// Shelley in the VM (image/shelley.socket): <vm>--agent, for who may use the VM.
 	// Below minVMPort, so not reachable as <vm>--<port>.
 	agentWebPort = 2999
-	// noVNC in the VM (image/boxe-desktop-web.socket): <vm>--desktop, the same.
+	// voxl in the VM (image/boxe-desktop-web.socket): <vm>--desktop, the same.
 	desktopWebPort = 2998
 )
 

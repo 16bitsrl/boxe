@@ -1,5 +1,5 @@
 [Unit]
-Description=boxe desktop in the browser (KasmVNC)
+Description=boxe desktop in the browser (voxl)
 Requires=boxe-desktop.service
 After=boxe-desktop.service
 

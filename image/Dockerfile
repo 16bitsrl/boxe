@@ -1,7 +1,32 @@
 # boxeuntu, the base image of the microVMs: exeuntu (exe.dev, Apache 2.0) plus a layer of ours.
 # Build: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxeuntu ./cmd/boxeuntu && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxe-computer ./cmd/boxe-computer && docker build --build-arg BOXE_SOURCE=$(git describe --tags --always) -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>
 # Pinned: a rebuild must not change what VMs get. To update: pull, read what changed, change the digest.
-FROM ghcr.io/boldsoftware/exeuntu@sha256:74db1d70f105846ab63a17aeca503f82309f565ead347ffccd3201ffd047ca36
+ARG BASE=ghcr.io/boldsoftware/exeuntu@sha256:74db1d70f105846ab63a17aeca503f82309f565ead347ffccd3201ffd047ca36
+
+# voxl (github.com/tembo/voxl, MIT; the binary links x264, GPL) streams the
+# desktop to the browser as H.264 over one WebSocket, with sound, clipboard
+# and files. It has no release binaries: this stage builds a pinned commit
+# (v0.3.4 and four more, the version we tried) on the base the image runs
+# on, and only the binary leaves it. Rust and esbuild are pinned too.
+FROM ${BASE} AS voxl
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential git ca-certificates pkg-config clang libyuv-dev libx264-dev libopus-dev libpulse-dev \
+        libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev libxcb-randr0-dev libxcb-damage0-dev libxcb-xtest0-dev \
+        libxcb-xkb-dev libxkbcommon-dev libxcb-xinput-dev
+ADD --checksum=sha256:b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55 \
+    https://static.rust-lang.org/rustup/archive/1.29.3/x86_64-unknown-linux-gnu/rustup-init /tmp/rustup-init
+ADD --checksum=sha256:9573bb2233aab0f9ea7647d5cca9726113cc1768de61d66b17267f4db84488f6 \
+    https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.28.2.tgz /tmp/esbuild.tgz
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
+RUN chmod 755 /tmp/rustup-init && /tmp/rustup-init -y -q --profile minimal --default-toolchain 1.99.1 --no-modify-path && \
+    tar -xzf /tmp/esbuild.tgz -C /tmp && install -m 755 /tmp/package/bin/esbuild /usr/local/bin/esbuild
+RUN git clone -q https://github.com/tembo/voxl /src && cd /src && \
+    git checkout -q b00f3b8b8c156b14e0c75abdfcf5cae9a14a865f && \
+    /opt/cargo/bin/cargo build -q --release --locked && \
+    strip -o /voxl target/release/voxl
+
+FROM ${BASE}
 
 # exeuntu's user is exedev: ours is boxedev, same UID and permissions.
 # exeuntu works in /home/exedev, and docker would make it again at every step.
@@ -46,25 +71,56 @@ ADD --checksum=sha256:56e80a95f63765aa4e3cadcac704f20cabfe848696e0d70f55e1f73664
 COPY scroll /usr/local/bin/scroll
 COPY exe-scroll-LICENSE /usr/share/doc/exe-scroll/LICENSE
 RUN chmod 755 /usr/local/bin/exe-scroll /usr/local/bin/scroll
-# A desktop with a browser, for agents that try UIs while their user watches:
-# KasmVNC (an X server that is also the desktop in the browser), openbox,
-# xterm, Google Chrome (the browser agents' tools use by default), at
-# https://<vm>--desktop.<domain>. It starts on first use. Agents drive it
-# with boxe-computer: screenshots, and mouse and keyboard through xdotool.
+# A desktop with a browser, for agents that try UIs while their user watches,
+# at https://<vm>--desktop.<domain>: Xvfb, openbox, xterm, PulseAudio for its
+# sound, and voxl, which streams it to the browser. It starts on first use.
+# Agents drive it with boxe-computer (screenshots, and mouse and keyboard
+# through xdotool), and its Google Chrome with browse (below).
 # Chrome comes from Google's repository under Google's terms, at its latest
-# version when the image is built. KasmVNC is pinned like the base image.
-ADD --checksum=sha256:89a5d1fbe9e032b122202be158a2b25f15c97e0a5b8dcf92a5e6835c7b7b2acd \
-    https://github.com/kasmtech/KasmVNC/releases/download/v1.5.2/kasmvncserver_ubuntu_noble_1.5.2_amd64.deb /tmp/kasmvnc.deb
+# version when the image is built.
+COPY --from=voxl /voxl /usr/local/bin/voxl
 RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg && \
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
         > /etc/apt/sources.list.d/google-chrome.list && \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        google-chrome-stable /tmp/kasmvnc.deb openbox xterm fonts-noto-color-emoji xdotool && \
-    rm -rf /var/lib/apt/lists/* /tmp/kasmvnc.deb
+        google-chrome-stable xvfb pulseaudio libx264-164 libyuv0 libopus0 libpulse0 \
+        openbox xterm fonts-noto-color-emoji xdotool && \
+    rm -rf /var/lib/apt/lists/* && \
+    LD_BIND_NOW=1 voxl --version
 COPY boxe-desktop.sh /usr/local/lib/boxe/desktop.sh
-COPY boxe-desktop.service boxe-desktop-web.service boxe-desktop-web.socket /etc/systemd/system/
+COPY desktop.pa /usr/local/lib/boxe/desktop.pa
+COPY desktop-client.conf /etc/pulse/client.conf.d/boxe-desktop.conf
+COPY boxe-desktop.service boxe-desktop-web.service boxe-desktop-web.socket boxe-chrome.service /etc/systemd/system/
 RUN chmod 755 /usr/local/lib/boxe/desktop.sh && systemctl enable boxe-desktop-web.socket
+# browse (github.com/anomalyco/browse, MIT) drives that Chrome for agents,
+# through its extension, so who watches the desktop sees what they do. Both
+# come from browse's GitHub release, never from the Chrome Web Store: the
+# extension is packed here with a key made for this build, and Chrome
+# installs it by policy from the local file. The browse command
+# (browse-wrapper.sh) accepts that extension and does not update itself:
+# the CLI and the extension must be the same version, so both change here.
+ADD --checksum=sha256:4a5a00eb15e9d8b126bed50f0499cab51e9c501bc9653866b3d002d35231051c \
+    https://registry.npmjs.org/@opencode/browse-linux-x64/-/browse-linux-x64-0.0.16.tgz /tmp/browse.tgz
+ADD --checksum=sha256:0d716106a36a42ab18d4abb2c3d449b88e20bc87e7321128da15feddde1a42c4 \
+    https://github.com/anomalyco/browse/releases/download/v0.0.16/browse-extension-0.0.16.zip /tmp/browse-extension.zip
+COPY browse-wrapper.sh /usr/local/bin/browse
+COPY boxe-browse-pair.sh /usr/local/lib/boxe/browse-pair.sh
+RUN set -e; ext=/usr/local/share/boxe/browse-extension; \
+    tar -xzf /tmp/browse.tgz -C /tmp && install -m 755 /tmp/package/bin/browse /usr/local/lib/boxe/browse && \
+    install -d "$ext" /tmp/browse-extension && \
+    python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' /tmp/browse-extension.zip /tmp/browse-extension && \
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out /tmp/browse-extension.pem && \
+    google-chrome --no-sandbox --pack-extension=/tmp/browse-extension --pack-extension-key=/tmp/browse-extension.pem && \
+    install -m 644 /tmp/browse-extension.crx "$ext/browse.crx" && \
+    id=$(openssl pkey -in /tmp/browse-extension.pem -pubout -outform DER | sha256sum | head -c 32 | tr 0-9a-f a-p) && \
+    echo "$id" > "$ext/id" && \
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n<gupdate xmlns="http://www.google.com/update2/response" protocol="2.0"><app appid="%s"><updatecheck codebase="file://%s/browse.crx" version="0.0.16"/></app></gupdate>\n' "$id" "$ext" > "$ext/update.xml" && \
+    install -d /etc/opt/chrome/policies/managed && \
+    printf '{"ExtensionInstallForcelist": ["%s;file://%s/update.xml"]}\n' "$id" "$ext" > /etc/opt/chrome/policies/managed/boxe.json && \
+    chmod 755 /usr/local/bin/browse /usr/local/lib/boxe/browse-pair.sh && \
+    rm -rf /tmp/browse.tgz /tmp/package /tmp/browse-extension* && \
+    browse --version
 # exeuntu masks udev (it is made for containers). A VM needs it: without it
 # the ACPI power button is ignored and the host cannot shut the VM down cleanly.
 RUN rm -f /etc/systemd/system/systemd-udevd.service /etc/systemd/system/systemd-udevd-control.service \

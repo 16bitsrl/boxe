@@ -28,8 +28,9 @@ const usage = `boxeuntu manages the coding agents of this VM.
   boxeuntu configure                 set Codex, OpenCode and pi up for the models of your
                                      boxe account, Claude Code and Codex for your
                                      subscriptions, and give every agent the computer
-                                     tools (MCP server "computer"); run it after
-                                     ssh boxe llm set, or restart the VM
+                                     and browser tools (MCP servers "computer" and
+                                     "browse"); run it after ssh boxe llm set, or
+                                     restart the VM
   sudo boxeuntu update <agent>       update claude, codex or opencode to the latest version
   boxeuntu update pi                 pi lives in your home: without sudo
   boxeuntu install <agent>           the same, for an agent that is not there
@@ -73,6 +74,8 @@ func configure(args []string, stdout io.Writer) error {
 	}
 	_, err := os.Stat(agentconfig.ComputerBin)
 	computer := err == nil
+	_, err = os.Stat(agentconfig.BrowseBin)
+	browser := computer && err == nil
 	if *gateway == "" {
 		b, err := os.ReadFile(agentconfig.GatewayFile)
 		switch {
@@ -112,6 +115,19 @@ func configure(args []string, stdout io.Writer) error {
 			fmt.Fprintln(stdout, "claude: has the computer tools already")
 		}
 	}
+	if browser {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		status, err := agentconfig.AddClaudeBrowse(home, claudeCLI(ctx))
+		cancel()
+		switch {
+		case err != nil:
+			claudeErr = errors.Join(claudeErr, fmt.Errorf("claude: %w", err))
+		case status == "added":
+			fmt.Fprintln(stdout, "claude: added the browser tools")
+		case status == "there":
+			fmt.Fprintln(stdout, "claude: has the browser tools already")
+		}
+	}
 	var g agentconfig.Gateway
 	if *gateway != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -121,7 +137,7 @@ func configure(args []string, stdout io.Writer) error {
 			// rewriting the others now would drop their models.
 			if computer {
 				var safe []agentconfig.File
-				for _, f := range agentconfig.Files(agentconfig.Gateway{}, true) {
+				for _, f := range agentconfig.Files(agentconfig.Gateway{}, true, browser) {
 					if _, serr := os.Stat(filepath.Join(home, f.Path)); errors.Is(serr, os.ErrNotExist) {
 						safe = append(safe, f)
 					}
@@ -132,7 +148,7 @@ func configure(args []string, stdout io.Writer) error {
 			return errors.Join(claudeErr, err)
 		}
 	}
-	results, err := agentconfig.Apply(home, agentconfig.Files(g, computer))
+	results, err := agentconfig.Apply(home, agentconfig.Files(g, computer, browser))
 	for _, r := range results {
 		switch r.Status {
 		case "written", "removed", "unchanged":

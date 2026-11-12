@@ -1,0 +1,5 @@
+# PulseAudio for the desktop: a sound card that plays nowhere, whose monitor
+# (output.monitor) voxl streams to the browser.
+load-module module-native-protocol-unix
+load-module module-null-sink sink_name=output sink_properties=device.description=Desktop
+set-default-sink output

@@ -34,6 +34,8 @@ const usage = `boxe-computer drives this VM's desktop (DISPLAY=:1, what the desk
   hold_key COMBO SECONDS
   wait SECONDS
   mcp                                   MCP server on stdin and stdout, one tool: computer
+  browse-mcp                            browse's MCP server, for the Chrome on the desktop;
+                                        starts the desktop when a tool call needs it
 
 Coordinates are pixels of the last screenshot: take one first. The desktop
 starts by itself. Without --out or --json, screenshot and zoom write the PNG
@@ -66,6 +68,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, c *computer) 
 			// screenshot taken meanwhile with the command must not move it.
 			c.statePath = ""
 			return fail(stderr, serveMCP(c, stdin, stdout))
+		case "browse-mcp":
+			if len(args) > 1 {
+				return fail(stderr, usagef("browse-mcp takes no arguments"))
+			}
+			return fail(stderr, serveBrowseMCP(stdin, stdout, stderr, ensureBrowser))
 		}
 	}
 	r, err := parseArgs(args, stdin)

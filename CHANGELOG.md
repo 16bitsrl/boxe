@@ -4,6 +4,25 @@ What changed in each release of boxe. Versions follow
 [semantic versioning](https://semver.org); until 1.0, a minor version may
 change how boxe is installed or run, and its notes say how to upgrade.
 
+## v0.4.0 (2026-11-12)
+
+- **A new desktop in the browser.** `https://<vm>--desktop.<domain>` is now
+  streamed by [voxl](https://github.com/tembo/voxl) instead of KasmVNC: it
+  needs far less bandwidth when pages scroll, follows the size of your
+  window, plays the desktop's sound, shares the clipboard both ways (images
+  too) and moves files to and from `~/Downloads` (the button at the top
+  right). On a phone: tap to click, long press for the right button, two
+  fingers to scroll.
+- **Agents browse in the desktop's Chrome.** Claude Code, Codex, OpenCode and
+  pi in the VM get the MCP tools of [browse](https://github.com/anomalyco/browse)
+  (`browse`): they drive the Chrome you see on the desktop, so you watch the
+  tabs they open and can take over, for a login for example. The first use
+  starts the desktop. browse and its extension come with the image, so it
+  works in VMs with limited egress too.
+  - Both come with the official image published with this release, which
+    every installation downloads within a day and uses for new VMs. Older
+    VMs keep KasmVNC and get no browser tools.
+
 ## v0.3.0 (2026-11-12)
 
 - **Subscriptions.** Each member can give boxe their own Claude or ChatGPT

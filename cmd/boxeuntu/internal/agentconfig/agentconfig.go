@@ -6,7 +6,8 @@
 // subscriptions go to Codex (its config file) and Claude Code (claude.go).
 //
 // Every agent also gets the computer tools (the MCP server "computer",
-// boxe-computer), with or without a gateway.
+// boxe-computer) and the browser tools (the MCP server "browse", browse
+// through boxe-computer browse-mcp), with or without a gateway.
 //
 // A file is ours while it holds what we last wrote (its hash is kept in a
 // state file): once the user changes it, it is theirs and left alone.
@@ -34,6 +35,11 @@ var GatewayFile = "/etc/boxe/llm-gateway"
 // ComputerBin drives the VM's desktop: the agents run it as the MCP server
 // "computer". Images older than it do not have it.
 var ComputerBin = "/usr/local/bin/boxe-computer"
+
+// BrowseBin drives the shared Chrome on the VM's desktop: the agents run it,
+// through ComputerBin browse-mcp, as the MCP server "browse". Images older
+// than it do not have it.
+var BrowseBin = "/usr/local/bin/browse"
 
 // The models OpenCode starts with: it has no default of its own for them.
 const (
@@ -110,25 +116,27 @@ func claudeSubscriptionScript(g Gateway) []byte {
 	return []byte("#!/bin/sh\n# Written by boxeuntu: Claude Code for OpenCode, on your Claude subscription.\nunset ANTHROPIC_API_KEY\nexec claude \"$@\"\n")
 }
 
-// Files are the config files for g, with the computer tools if computer.
-// A zero g (no gateway) gives the computer tools alone.
-func Files(g Gateway, computer bool) []File {
+// Files are the config files for g, with the computer tools if computer and
+// the browser tools if browser. A zero g (no gateway) gives the tools alone.
+func Files(g Gateway, computer, browser bool) []File {
 	files := []File{
-		{"codex", ".codex/config.toml", codexConfig(g, computer), false},
-		{"opencode", ".config/opencode/opencode.json", openCodeConfig(g, computer), false},
+		{"codex", ".codex/config.toml", codexConfig(g, computer, browser), false},
+		{"opencode", ".config/opencode/opencode.json", openCodeConfig(g, computer, browser), false},
 		{"pi", ".pi/agent/models.json", piModels(g), false},
 		{"claude", ClaudeSubscriptionScript, claudeSubscriptionScript(g), true},
 	}
 	if computer {
 		// pi keeps its MCP servers in a file of their own.
-		files = append(files, File{"pi", ".pi/agent/mcp.json", jsonFile(map[string]any{
-			"mcpServers": map[string]any{"computer": map[string]any{"command": ComputerBin, "args": []string{"mcp"}}},
-		}), false})
+		servers := map[string]any{"computer": map[string]any{"command": ComputerBin, "args": []string{"mcp"}}}
+		if browser {
+			servers["browse"] = map[string]any{"command": ComputerBin, "args": []string{"browse-mcp"}}
+		}
+		files = append(files, File{"pi", ".pi/agent/mcp.json", jsonFile(map[string]any{"mcpServers": servers}), false})
 	}
 	return files
 }
 
-func codexConfig(g Gateway, computer bool) []byte {
+func codexConfig(g Gateway, computer, browser bool) []byte {
 	if !g.OpenAI && !g.ChatGPT && !computer {
 		return nil
 	}
@@ -165,10 +173,21 @@ command = %q
 args = ["mcp"]
 `, ComputerBin)
 	}
+	if browser {
+		// The first call starts the desktop and pairs browse with Chrome:
+		// more than Codex's 60 seconds.
+		fmt.Fprintf(&b, `
+# The browser tools: the shared Chrome on this VM's desktop, through browse.
+[mcp_servers.browse]
+command = %q
+args = ["browse-mcp"]
+tool_timeout_sec = 180
+`, ComputerBin)
+	}
 	return []byte(b.String())
 }
 
-func openCodeConfig(g Gateway, computer bool) []byte {
+func openCodeConfig(g Gateway, computer, browser bool) []byte {
 	providers := map[string]any{}
 	model := ""
 	if g.OpenAI {
@@ -189,9 +208,11 @@ func openCodeConfig(g Gateway, computer bool) []byte {
 	}
 	if computer {
 		// The shape opencode mcp add writes since OpenCode 2.
-		config["mcp"] = map[string]any{"servers": map[string]any{
-			"computer": map[string]any{"type": "local", "command": []string{ComputerBin, "mcp"}},
-		}}
+		servers := map[string]any{"computer": map[string]any{"type": "local", "command": []string{ComputerBin, "mcp"}}}
+		if browser {
+			servers["browse"] = map[string]any{"type": "local", "command": []string{ComputerBin, "browse-mcp"}}
+		}
+		config["mcp"] = map[string]any{"servers": servers}
 	}
 	return jsonFile(config)
 }
@@ -323,8 +344,12 @@ func writeFile(path string, content []byte) error {
 }
 
 // claudeMarker records that Claude Code was given the computer tools once:
-// a user who removes them does not get them back.
-const claudeMarker = ".config/boxeuntu/claude-computer"
+// a user who removes them does not get them back. claudeBrowseMarker is the
+// same for the browser tools.
+const (
+	claudeMarker       = ".config/boxeuntu/claude-computer"
+	claudeBrowseMarker = ".config/boxeuntu/claude-browse"
+)
 
 // AddClaudeComputer gives Claude Code the computer tools, once. Its user
 // config (~/.claude.json) is also its own state, so only its CLI changes it.
@@ -332,15 +357,25 @@ const claudeMarker = ".config/boxeuntu/claude-computer"
 // It says "added", "there" (the user had them already), or "" when there
 // was nothing to do.
 func AddClaudeComputer(home string, claude func(args ...string) error) (string, error) {
-	marker := filepath.Join(home, claudeMarker)
+	return addClaudeMCP(home, claudeMarker, claude, "computer", "mcp")
+}
+
+// AddClaudeBrowse gives Claude Code the browser tools, once, as
+// AddClaudeComputer does the computer tools.
+func AddClaudeBrowse(home string, claude func(args ...string) error) (string, error) {
+	return addClaudeMCP(home, claudeBrowseMarker, claude, "browse", "browse-mcp")
+}
+
+func addClaudeMCP(home, marker string, claude func(args ...string) error, server, arg string) (string, error) {
+	marker = filepath.Join(home, marker)
 	if _, err := os.Stat(marker); err == nil || claude == nil {
 		return "", nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
 	status := "there"
-	if claude("mcp", "get", "computer") != nil {
-		if err := claude("mcp", "add", "--scope", "user", "computer", "--", ComputerBin, "mcp"); err != nil {
+	if claude("mcp", "get", server) != nil {
+		if err := claude("mcp", "add", "--scope", "user", server, "--", ComputerBin, arg); err != nil {
 			return "", err
 		}
 		status = "added"

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// https://<vm>--desktop.<domain> is the VM's desktop (noVNC): like the
+// https://<vm>--desktop.<domain> is the VM's desktop (voxl): like the
 // agent, its owner's only.
 func TestWebDesktopIsTheOwners(t *testing.T) {
 	wt := newWebTest(t)
@@ -25,7 +25,7 @@ func TestWebDesktopIsTheOwners(t *testing.T) {
 	}
 }
 
-// noVNC and Shelley talk over WebSockets, which a page of another VM (same
+// voxl and Shelley talk over WebSockets, which a page of another VM (same
 // site, so the owner's cookie goes along) could open: only the VM host's
 // own pages may.
 func TestWebOwnerOnlyWebSockets(t *testing.T) {
