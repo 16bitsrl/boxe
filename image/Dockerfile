@@ -1,7 +1,7 @@
 # boxeuntu, the base image of the microVMs: exeuntu (exe.dev, Apache 2.0) plus a layer of ours.
 # Build: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxeuntu ./cmd/boxeuntu && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o image/boxe-computer ./cmd/boxe-computer && docker build --build-arg BOXE_SOURCE=$(git describe --tags --always) -t boxeuntu:<date> image/ && sudo scripts/build-base.sh boxeuntu:<date> boxeuntu-<date>
 # Pinned: a rebuild must not change what VMs get. To update: pull, read what changed, change the digest.
-ARG BASE=ghcr.io/boldsoftware/exeuntu@sha256:74db1d70f105846ab63a17aeca503f82309f565ead347ffccd3201ffd047ca36
+ARG BASE=ghcr.io/boldsoftware/exeuntu@sha256:6684c9717607810cbba0aa40cc1b41d7c73093c373ff4bdb3f5ec08654d86101
 
 # voxl (github.com/tembo/voxl, MIT; the binary links x264, GPL) streams the
 # desktop to the browser as H.264 over one WebSocket, with sound, clipboard
